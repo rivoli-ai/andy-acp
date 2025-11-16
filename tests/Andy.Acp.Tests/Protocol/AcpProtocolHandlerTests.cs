@@ -525,5 +525,138 @@ namespace Andy.Acp.Tests.Protocol
             // Session should still be created even with null client info
             Assert.Null(handler.CurrentSession.Capabilities?.ClientInfo);
         }
+
+        [Fact]
+        public async Task HandleInitializeAsync_AfterShutdown_ThrowsSessionNotInitialized()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            });
+
+            // Shutdown the session (this terminates and nulls the session)
+            await handler.HandleShutdownAsync(null);
+
+            // Act - Try to initialize after shutdown (session is now null, so new init should succeed)
+            var result = await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient2", Version = "1.0.0" }
+            });
+
+            // Assert - Should successfully create a new session
+            Assert.NotNull(result);
+            Assert.NotNull(handler.CurrentSession);
+        }
+
+        [Fact]
+        public async Task HandleInitializedAsync_AfterShutdown_ThrowsSessionNotInitialized()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            });
+
+            // Shutdown the session
+            await handler.HandleShutdownAsync(null);
+
+            // Act & Assert - Try to send initialized after shutdown
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(async () =>
+            {
+                await handler.HandleInitializedAsync(null);
+            });
+
+            Assert.Equal(JsonRpcErrorCodes.SessionNotInitialized, exception.ErrorCode);
+            Assert.Contains("No active session", exception.Message);
+        }
+
+        [Fact]
+        public async Task HandleShutdownAsync_WithPendingRequests_WaitsForCompletion()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            });
+
+            // Add some pending requests
+            var request1 = new JsonRpcRequest { Method = "test1", Id = 1 };
+            var request2 = new JsonRpcRequest { Method = "test2", Id = 2 };
+            handler.CurrentSession!.AddPendingRequest(request1);
+            handler.CurrentSession.AddPendingRequest(request2);
+
+            Assert.Equal(2, handler.CurrentSession.PendingRequests.Count);
+
+            // Act - Start shutdown in background and complete requests
+            var shutdownTask = Task.Run(async () => await handler.HandleShutdownAsync(null));
+
+            // Complete the requests while shutdown is waiting
+            await Task.Delay(50); // Let shutdown start waiting
+            handler.CurrentSession.CompletePendingRequest(1);
+            await Task.Delay(50);
+            handler.CurrentSession.CompletePendingRequest(2);
+
+            // Wait for shutdown to complete
+            var result = await shutdownTask as ShutdownResult;
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.True(result.Success);
+            Assert.Null(handler.CurrentSession); // Session should be terminated
+        }
+
+        [Fact]
+        public async Task HandleShutdownAsync_WithSlowPendingRequests_TimesOutAndTerminates()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            });
+
+            // Add a pending request that won't complete
+            var request = new JsonRpcRequest { Method = "slow-test", Id = 1 };
+            handler.CurrentSession!.AddPendingRequest(request);
+
+            Assert.Equal(1, handler.CurrentSession.PendingRequests.Count);
+
+            // Act - Shutdown should timeout waiting for the request
+            var result = await handler.HandleShutdownAsync(null) as ShutdownResult;
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.True(result.Success); // Shutdown still succeeds even if timeout
+            Assert.Null(handler.CurrentSession); // Session is terminated despite pending request
+        }
+
+        [Fact]
+        public async Task HandleShutdownAsync_NoPendingRequests_TerminatesImmediately()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            await handler.HandleInitializeAsync(new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            });
+
+            Assert.Equal(0, handler.CurrentSession!.PendingRequests.Count);
+
+            // Act
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var result = await handler.HandleShutdownAsync(null) as ShutdownResult;
+            stopwatch.Stop();
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.True(result.Success);
+            Assert.Null(handler.CurrentSession);
+            // Should complete quickly since no pending requests
+            Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"Shutdown took {stopwatch.ElapsedMilliseconds}ms, expected < 1000ms");
+        }
     }
 }

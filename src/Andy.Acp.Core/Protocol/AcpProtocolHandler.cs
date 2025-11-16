@@ -58,6 +58,17 @@ namespace Andy.Acp.Core.Protocol
             // Check if already initialized
             if (_currentSession != null)
             {
+                // Check if session is shutting down or terminated
+                if (_currentSession.State == SessionState.ShuttingDown ||
+                    _currentSession.State == SessionState.Terminated)
+                {
+                    _logger?.LogWarning("Initialize called after shutdown");
+                    throw new JsonRpcProtocolException(
+                        JsonRpcErrorCodes.InvalidRequest,
+                        "Cannot initialize after shutdown. Session is terminating."
+                    );
+                }
+
                 _logger?.LogWarning("Initialize called but session already exists: {SessionId}", _currentSession.SessionId);
                 throw new JsonRpcProtocolException(
                     JsonRpcErrorCodes.SessionAlreadyInitialized,
@@ -165,7 +176,19 @@ namespace Andy.Acp.Core.Protocol
                 );
             }
 
-            if (_currentSession.State != SessionState.Initialized)
+            // Reject if session is shutting down or terminated
+            if (_currentSession.State == SessionState.ShuttingDown ||
+                _currentSession.State == SessionState.Terminated)
+            {
+                _logger?.LogWarning("Initialized notification received after shutdown");
+                throw new JsonRpcProtocolException(
+                    JsonRpcErrorCodes.InvalidRequest,
+                    "Cannot process initialized notification. Session is shutting down."
+                );
+            }
+
+            if (_currentSession.State != SessionState.Initialized &&
+                _currentSession.State != SessionState.Active)
             {
                 _logger?.LogWarning("Initialized notification received but session is in state: {State}",
                     _currentSession.State);
@@ -217,6 +240,34 @@ namespace Andy.Acp.Core.Protocol
 
             // Initiate graceful shutdown
             _currentSession.Shutdown();
+
+            // Wait for pending operations to complete (with 5 second timeout)
+            var pendingCount = _currentSession.PendingRequests.Count;
+            if (pendingCount > 0)
+            {
+                _logger?.LogInformation("Waiting for {Count} pending requests to complete", pendingCount);
+
+                var timeout = TimeSpan.FromSeconds(5);
+                var startTime = DateTime.UtcNow;
+
+                while (_currentSession.PendingRequests.Count > 0 &&
+                       DateTime.UtcNow - startTime < timeout &&
+                       !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(100, cancellationToken);
+                }
+
+                var remainingCount = _currentSession.PendingRequests.Count;
+                if (remainingCount > 0)
+                {
+                    _logger?.LogWarning("{Count} requests did not complete within timeout, forcing termination",
+                        remainingCount);
+                }
+                else
+                {
+                    _logger?.LogInformation("All pending requests completed successfully");
+                }
+            }
 
             // Terminate the session
             var sessionId = _currentSession.SessionId;
