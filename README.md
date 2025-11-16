@@ -10,27 +10,31 @@ This repository contains a C# implementation of the Agent Client Protocol (ACP),
 ```
 andy-acp/
 ├── src/
-│   ├── Andy.Acp.Core/          # Core library with transport layer
-│   │   └── Transport/
-│   │       ├── ITransport.cs
-│   │       └── StdioTransport.cs
-│   └── Andy.Acp.Server/         # Server application
-│       └── Program.cs
+│   └── Andy.Acp.Core/              # Core ACP library
+│       ├── Transport/              # Transport layer (stdio)
+│       ├── JsonRpc/                # JSON-RPC 2.0 implementation
+│       ├── Session/                # Session management
+│       └── Protocol/               # ACP protocol (initialize, shutdown)
 ├── tests/
-│   └── Andy.Acp.Tests/          # Unit tests
-│       └── Transport/
-│           └── StdioTransportTests.cs
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (199 tests)
+│       ├── Transport/
+│       ├── JsonRpc/
+│       ├── Session/
+│       └── Protocol/
 ├── examples/
-│   └── Andy.Acp.Examples/       # Usage examples and demonstrations
-│       └── Program.cs
-├── demo.sh                      # Interactive demonstration script
-├── test-*.sh                    # Signal handling and functionality tests
-└── Andy.Acp.sln                 # Solution file
+│   └── Andy.Acp.Examples/          # Working ACP server example
+│       ├── Program.cs              # Server/client implementation
+│       ├── README.md               # Zed integration guide
+│       ├── zed-settings.example.json
+│       └── test-server.sh
+├── TOOLS_COMPARISON.md             # Andy.Tools vs ACP interfaces analysis
+└── Andy.Acp.sln
 ```
 
 ## Features Implemented
 
-### Issue #2: Stdio Transport Layer Foundation ✅
+### ✅ Issue #2: Stdio Transport Layer Foundation
+**Status: Complete** | 17 tests | [Issue #2](https://github.com/rivoli-ai/andy-acp/issues/2)
 
 - **ITransport Interface**: Defines the contract for transport implementations
 - **StdioTransport Class**: Implements stdio-based communication with:
@@ -42,9 +46,41 @@ andy-acp/
   - Enhanced signal handling (SIGINT/SIGTERM) for graceful shutdown
 - **Structured Logging**: Microsoft.Extensions.Logging with stderr output
 - **Signal Handling**: POSIX signals for Unix systems, Console.CancelKeyPress for interactive mode
-- **Comprehensive Unit Tests**: 17 tests covering all major scenarios including cancellation
-- **Working Examples**: Client/server demonstration programs with proper ACP protocol communication
-- **Test Scripts**: Automated signal handling and functionality verification
+
+### ✅ Issue #3: JSON-RPC 2.0 Message Handling
+**Status: Complete** | 86 tests | [Issue #3](https://github.com/rivoli-ai/andy-acp/issues/3)
+
+- **JsonRpcSerializer**: Serialization/deserialization of JSON-RPC 2.0 messages
+- **JsonRpcHandler**: Method registration and request dispatching
+- **Message Types**: Request, Response, Notification, Error, Batch
+- **Error Handling**: Standard JSON-RPC error codes and custom exceptions
+- **Method Registration**: Dynamic method registration with async handlers
+- **Batch Support**: Process multiple requests in a single message
+- **Validation**: Strict JSON-RPC 2.0 specification compliance
+
+### ✅ Issue #4: Session Management and State Handling
+**Status: Complete** | 73 tests | [Issue #4](https://github.com/rivoli-ai/andy-acp/issues/4)
+
+- **AcpSession**: Session lifecycle management (Created → Initializing → Initialized → Active → ShuttingDown → Terminated)
+- **ISessionManager**: Session creation, tracking, and cleanup
+- **SessionManager**: Default implementation with timeout support
+- **Pending Request Tracking**: Track in-flight requests for graceful shutdown
+- **Session Health Monitoring**: Automatic timeout detection
+- **Client Capabilities**: Store and manage client-provided capabilities
+- **Background Cleanup**: Automatic session cleanup for terminated sessions
+
+### ✅ Issue #5: Initialization Handshake Protocol
+**Status: Complete** | 23 tests | [Issue #5](https://github.com/rivoli-ai/andy-acp/issues/5)
+
+- **AcpProtocolHandler**: Handles initialize, initialized, shutdown methods
+- **Protocol Models**: InitializeParams, InitializeResult, ServerInfo, ServerCapabilities
+- **Capability Negotiation**: Tools, Prompts, Resources, Logging capabilities
+- **Protocol Version Validation**: Ensures client/server compatibility
+- **Graceful Shutdown**: Waits up to 5 seconds for pending requests
+- **State Management**: Validates requests based on session state
+- **Session Information**: Returns session ID, timeout, and metadata
+
+**Total: 199 tests passing**
 
 ## Building and Testing
 
@@ -67,8 +103,8 @@ dotnet test
 # Show usage help
 dotnet run --project examples/Andy.Acp.Examples
 
-# Run complete client-server demo (recommended)
-./demo.sh
+# Run automated test (recommended)
+cd examples/Andy.Acp.Examples && ./test-server.sh
 
 # Run as server (receives ACP messages from stdin)
 dotnet run --project examples/Andy.Acp.Examples -- --server
@@ -76,22 +112,20 @@ dotnet run --project examples/Andy.Acp.Examples -- --server
 # Run as client (sends ACP messages to stdout)
 dotnet run --project examples/Andy.Acp.Examples -- --client
 
-# Pipe client output to server (demonstrates ACP protocol)
-dotnet run --project examples/Andy.Acp.Examples -- --client | dotnet run --project examples/Andy.Acp.Examples -- --server
+# Pipe client output to server (demonstrates full ACP protocol)
+dotnet run --project examples/Andy.Acp.Examples -- --client | \
+    dotnet run --project examples/Andy.Acp.Examples -- --server
 ```
 
-### Test Signal Handling
+### Test with Zed Editor
 
-```bash
-# Test Ctrl+C handling
-./test-ctrl-c.sh
+See detailed instructions in `examples/Andy.Acp.Examples/README.md`.
 
-# Test detailed signal handling (SIGINT and SIGTERM)
-./test-detailed-signals.sh
-
-# Test interactive mode
-./test-interactive.sh
-```
+Quick start:
+1. Build: `dotnet build examples/Andy.Acp.Examples`
+2. Copy `zed-settings.example.json` configuration to `~/.config/zed/settings.json`
+3. Update paths in configuration
+4. Open Zed and press `Cmd+?` (macOS) or `Ctrl+?` (Windows/Linux)
 
 ## Message Format
 
@@ -103,30 +137,88 @@ Content-Length: <length>\r\n
 <JSON message body>
 ```
 
-Example ACP messages sent by the client:
+Example ACP protocol flow:
 ```json
-{"method":"initialize","id":1,"params":{"clientInfo":{"name":"Andy.Acp.Examples","version":"1.0.0"}}}
-{"method":"ping","id":2,"params":{}}
-{"method":"echo","id":3,"params":{"text":"Hello, ACP World!"}}
-{"method":"test","id":4,"params":{"data":[1,2,3,4,5]}}
+// 1. Client sends initialize
+{"jsonrpc":"2.0","method":"initialize","id":1,"params":{
+  "protocolVersion":"1.0",
+  "clientInfo":{"name":"Zed","version":"0.1.0"},
+  "capabilities":{"supportedTools":["echo","ping"]}
+}}
+
+// 2. Server responds with capabilities
+{"jsonrpc":"2.0","id":1,"result":{
+  "protocolVersion":"1.0",
+  "serverInfo":{"name":"Andy.Acp.Examples","version":"1.0.0"},
+  "capabilities":{
+    "tools":{"supported":true,"available":["echo","ping","test"]},
+    "resources":{"supported":true},
+    "logging":{"supported":true}
+  },
+  "sessionInfo":{"sessionId":"abc123","timeoutMs":1800000}
+}}
+
+// 3. Client confirms with initialized notification
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+
+// 4. Client can now call tools
+{"jsonrpc":"2.0","method":"ping","id":2,"params":{}}
+
+// 5. Server responds
+{"jsonrpc":"2.0","id":2,"result":{"status":"pong","timestamp":"2025-11-16T23:21:08.071Z"}}
+
+// 6. Client shuts down
+{"jsonrpc":"2.0","method":"shutdown","id":3,"params":{"reason":"Done"}}
+
+// 7. Server acknowledges
+{"jsonrpc":"2.0","id":3,"result":{"success":true,"message":"Session terminated successfully"}}
 ```
 
-Example server responses:
-```json
-{"id":"example-123","result":{"echo":"...","timestamp":"2025-09-28T15:17:07.290Z"},"jsonrpc":"2.0"}
-```
+## What the Example Does
+
+The `examples/Andy.Acp.Examples` project demonstrates a working ACP server that can be used with Zed editor:
+
+**Server Mode** (`--server`):
+- Listens for JSON-RPC messages on stdin
+- Sends responses to stdout (logs go to stderr)
+- Implements complete ACP protocol: initialize → initialized → tools → shutdown
+- Example tools: ping, echo, test
+- Session management with timeout tracking
+- Graceful shutdown with pending request handling
+
+**Client Mode** (`--client`):
+- Sends a series of test messages demonstrating ACP protocol
+- Can be piped to server for testing: `--client | --server`
+
+**Zed Integration**:
+- Includes `zed-settings.example.json` with ready-to-use configuration
+- Includes comprehensive `README.md` with setup instructions
+- Includes `test-server.sh` for automated testing
+
+See `examples/Andy.Acp.Examples/README.md` for detailed Zed integration instructions.
 
 ## Next Steps
 
-The following transferred issues from andy-cli are ready for implementation:
+### ⏳ Issue #6: Tool Framework
+**Status: In Progress** | [Issue #6](https://github.com/rivoli-ai/andy-acp/issues/6)
 
-1. **Issue #5**: JSON-RPC 2.0 message parsing and handling
-2. **Issue #6**: Session management and state handling
-3. **Issue #7**: Initialization handshake protocol
-4. **Issue #8**: Tool discovery and capability negotiation
-5. **Issue #9**: Expose andy-cli tools via ACP protocol
-6. **Issue #10**: Resource management (files, URIs)
-7. **Issue #11**: Zed editor integration and end-to-end testing
+Implement generic tool infrastructure for andy-acp:
+- `IAcpToolProvider` interface for tool registration and execution
+- `tools/list` handler to advertise available tools
+- `tools/call` handler to execute tools
+- Minimal ACP-aligned models (AcpToolDefinition, AcpInputSchema, AcpToolResult)
+- Working example with concrete tools
+
+**Note**: This provides the generic framework. Concrete andy-cli tool implementations will use andy-tools library with an adapter pattern (see TOOLS_COMPARISON.md).
+
+### ⏳ Issue #7: Zed Integration Testing
+**Status: Not Started** | [Issue #7](https://github.com/rivoli-ai/andy-acp/issues/7)
+
+End-to-end testing with Zed editor:
+- Verify protocol flow with real Zed client
+- Test tool execution through Zed
+- Validate session lifecycle
+- Performance and reliability testing
 
 ## Integration with Zed
 
