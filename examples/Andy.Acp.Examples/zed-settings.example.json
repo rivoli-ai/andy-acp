@@ -1,0 +1,60 @@
+{
+  "assistant": {
+    "version": "2",
+    "provider": {
+      "name": "acp",
+      "servers": [
+        {
+          "name": "andy-acp-example",
+          "command": "dotnet",
+          "args": [
+            "run",
+            "--project",
+            "/absolute/path/to/andy-acp/examples/Andy.Acp.Examples",
+            "--",
+            "--server"
+          ],
+          "env": {},
+          "description": "Andy ACP Example Server - demonstrates ACP protocol implementation"
+        }
+      ]
+    }
+  },
+  "// Note": [
+    "This is an example Zed configuration for the Andy ACP server.",
+    "Copy the 'assistant' section to your Zed settings.json file.",
+    "",
+    "Location of Zed settings.json:",
+    "  - macOS/Linux: ~/.config/zed/settings.json",
+    "  - Windows: %APPDATA%\\Zed\\settings.json",
+    "",
+    "IMPORTANT: Replace '/absolute/path/to/andy-acp' with the actual",
+    "absolute path to your andy-acp repository directory.",
+    "",
+    "Alternative using published binary:",
+    "1. Publish the example:",
+    "   cd examples/Andy.Acp.Examples",
+    "   dotnet publish -c Release -r osx-arm64 --self-contained -o ./bin/publish",
+    "",
+    "2. Update configuration:",
+    "   \"command\": \"/absolute/path/to/andy-acp/examples/Andy.Acp.Examples/bin/publish/Andy.Acp.Examples\",",
+    "   \"args\": [\"--server\"]",
+    "",
+    "Testing the connection:",
+    "1. Open Zed Editor",
+    "2. Open Assistant Panel: Cmd+? (macOS) or Ctrl+? (Windows/Linux)",
+    "3. Check connection status",
+    "4. Try using the assistant - it should connect to your ACP server",
+    "",
+    "Available tools in this example:",
+    "  - ping: Simple health check",
+    "  - echo: Echoes back input data",
+    "  - test: Demonstrates parameter handling",
+    "",
+    "Debugging:",
+    "- Check stderr output for server logs",
+    "- Test manually: echo '{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}' | dotnet run -- --server",
+    "- Verify all paths are absolute and correct",
+    "- Ensure dotnet is in your PATH"
+  ]
+}

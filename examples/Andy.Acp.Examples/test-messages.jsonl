@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"1.0","clientInfo":{"name":"TestClient","version":"1.0.0"}}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","method":"ping","id":2,"params":{}}
+{"jsonrpc":"2.0","method":"echo","id":3,"params":{"text":"Hello ACP!"}}
+{"jsonrpc":"2.0","method":"shutdown","id":4,"params":{"reason":"Test complete"}}
