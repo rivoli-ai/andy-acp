@@ -252,4 +252,46 @@ namespace Andy.Acp.Core.JsonRpc
         public JsonRpcInvalidRequestException(string message) : base(message) { }
         public JsonRpcInvalidRequestException(string message, Exception innerException) : base(message, innerException) { }
     }
+
+    /// <summary>
+    /// Exception thrown for JSON-RPC protocol errors with specific error codes
+    /// </summary>
+    public class JsonRpcProtocolException : JsonRpcException
+    {
+        /// <summary>
+        /// The JSON-RPC error code
+        /// </summary>
+        public int ErrorCode { get; }
+
+        /// <summary>
+        /// Optional additional error data
+        /// </summary>
+        public object? ErrorData { get; }
+
+        /// <summary>
+        /// Initializes a new protocol exception with an error code
+        /// </summary>
+        public JsonRpcProtocolException(int errorCode, string message) : base(message)
+        {
+            ErrorCode = errorCode;
+        }
+
+        /// <summary>
+        /// Initializes a new protocol exception with an error code and data
+        /// </summary>
+        public JsonRpcProtocolException(int errorCode, string message, object? errorData) : base(message)
+        {
+            ErrorCode = errorCode;
+            ErrorData = errorData;
+        }
+
+        /// <summary>
+        /// Initializes a new protocol exception with an error code and inner exception
+        /// </summary>
+        public JsonRpcProtocolException(int errorCode, string message, Exception innerException)
+            : base(message, innerException)
+        {
+            ErrorCode = errorCode;
+        }
+    }
 }

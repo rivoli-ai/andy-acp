@@ -218,6 +218,11 @@ namespace Andy.Acp.Core.JsonRpc
                 _logger?.LogWarning("Method execution cancelled: {Method}", request.Method);
                 return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.Cancelled);
             }
+            catch (JsonRpcProtocolException ex)
+            {
+                _logger?.LogWarning(ex, "Protocol error in method: {Method}", request.Method);
+                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.Data);
+            }
             catch (ArgumentException ex)
             {
                 _logger?.LogWarning(ex, "Invalid parameters for method: {Method}", request.Method);
@@ -241,6 +246,11 @@ namespace Andy.Acp.Core.JsonRpc
             {
                 _logger?.LogWarning("Method execution cancelled: {Method}", request.Method);
                 return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.Cancelled);
+            }
+            catch (JsonRpcProtocolException ex)
+            {
+                _logger?.LogWarning(ex, "Protocol error in method: {Method}", request.Method);
+                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.Data);
             }
             catch (ArgumentException ex)
             {

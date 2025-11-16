@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Andy.Acp.Core.Transport;
 using Andy.Acp.Core.JsonRpc;
 using Andy.Acp.Core.Session;
+using Andy.Acp.Core.Protocol;
 
 namespace Andy.Acp.Examples
 {
@@ -326,38 +327,60 @@ namespace Andy.Acp.Examples
 
             try
             {
-                // Create a series of JSON-RPC test requests
+                // Create a series of JSON-RPC test requests demonstrating complete ACP handshake
                 var testRequests = new JsonRpcRequest[]
                 {
+                    // Step 1: Initialize the ACP session
                     new() {
                         Method = "initialize",
                         Id = 1,
-                        Params = new { clientInfo = new { name = "Andy.Acp.Examples", version = "1.0.0" } }
+                        Params = new {
+                            ProtocolVersion = "1.0",
+                            ClientInfo = new {
+                                Name = "Andy.Acp.Examples.Client",
+                                Version = "1.0.0",
+                                Description = "Example ACP client"
+                            },
+                            Capabilities = new {
+                                SupportedTools = new[] { "echo", "ping" }
+                            }
+                        }
                     },
+                    // Step 2: Send 'initialized' notification to confirm session is ready
+                    new() {
+                        Method = "initialized",
+                        // No Id = notification
+                        Params = new { }
+                    },
+                    // Step 3: Use the session - ping
                     new() {
                         Method = "ping",
                         Id = 2,
                         Params = new { }
                     },
+                    // Step 4: Use the session - echo
                     new() {
                         Method = "echo",
                         Id = 3,
-                        Params = new { text = "Hello, JSON-RPC World!" }
+                        Params = new { text = "Hello, ACP Protocol!" }
                     },
+                    // Step 5: Use the session - test
                     new() {
                         Method = "test",
                         Id = 4,
                         Params = new { data = new[] { 1, 2, 3, 4, 5 }, message = "Test data" }
                     },
+                    // Step 6: Send a notification (no response expected)
                     new() {
                         Method = "notify",
                         // No Id = notification
                         Params = new { notification = "This is a notification (no response expected)" }
                     },
+                    // Step 7: Shutdown the session gracefully
                     new() {
-                        Method = "error",
-                        Id = 6,
-                        Params = new { trigger = "test error" }
+                        Method = "shutdown",
+                        Id = 5,
+                        Params = new { Reason = "Client demonstration complete" }
                     }
                 };
 
@@ -399,57 +422,43 @@ namespace Andy.Acp.Examples
 
         static void RegisterExampleMethods(JsonRpcHandler handler, ILogger logger, ISessionManager sessionManager)
         {
-            // Initialize method - typical ACP initialization with session management
-            handler.RegisterMethod("initialize", (parameters, ct) =>
+            // Register ACP protocol methods (initialize, initialized, shutdown) using the official ACP protocol handler
+            var serverInfo = new ServerInfo
             {
-                logger.LogInformation("Initialize method called with session management");
+                Name = "Andy.Acp.Examples",
+                Version = "1.0.0",
+                Description = "Example ACP server demonstrating protocol implementation"
+            };
 
-                // Extract client capabilities from parameters if provided
-                ClientCapabilities? clientCapabilities = null;
-                try
+            var serverCapabilities = new ServerCapabilities
+            {
+                Tools = new ToolsCapability
                 {
-                    if (parameters is JsonElement jsonElement && jsonElement.TryGetProperty("clientInfo", out var clientInfoElement))
-                    {
-                        var clientInfo = new ClientInfo
-                        {
-                            Name = "Unknown Client",
-                            Version = "Unknown Version"
-                        };
-                        if (clientInfoElement.TryGetProperty("name", out var nameElement))
-                            clientInfo.Name = nameElement.GetString() ?? "Unknown Client";
-                        if (clientInfoElement.TryGetProperty("version", out var versionElement))
-                            clientInfo.Version = versionElement.GetString() ?? "Unknown Version";
-
-                        clientCapabilities = new ClientCapabilities { ClientInfo = clientInfo };
-                    }
+                    Supported = true,
+                    Available = new[] { "echo", "ping", "test" },
+                    ListSupported = true,
+                    ExecutionSupported = true
+                },
+                Resources = new ResourcesCapability
+                {
+                    Supported = true,
+                    SupportedSchemes = new[] { "file://" }
+                },
+                Prompts = new PromptsCapability
+                {
+                    Supported = false
+                },
+                Logging = new LoggingCapability
+                {
+                    Supported = true,
+                    SupportedLevels = new[] { "debug", "info", "warning", "error" }
                 }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Failed to parse client capabilities from initialize request");
-                }
+            };
 
-                var result = new
-                {
-                    protocolVersion = "1.0",
-                    serverInfo = new
-                    {
-                        name = "Andy.Acp.Examples",
-                        version = "1.0.0"
-                    },
-                    capabilities = new
-                    {
-                        tools = new[] { "echo", "ping", "test" },
-                        resources = new[] { "file://" },
-                        sessionManagement = true
-                    },
-                    sessionInfo = new
-                    {
-                        totalSessions = sessionManager.ActiveSessions.Count,
-                        sessionTimeout = sessionManager.DefaultSessionTimeout.TotalMinutes + " minutes"
-                    }
-                };
-                return Task.FromResult<object?>(result);
-            });
+            var protocolHandler = new AcpProtocolHandler(sessionManager, serverInfo, serverCapabilities, logger as ILogger<AcpProtocolHandler>);
+            protocolHandler.RegisterMethods(handler);
+
+            logger.LogInformation("Registered ACP protocol methods: initialize, initialized, shutdown");
 
             // Ping method - simple health check
             handler.RegisterMethod("ping", (parameters, ct) =>
