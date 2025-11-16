@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -271,7 +272,7 @@ namespace Andy.Acp.Tests.Protocol
         }
 
         [Fact]
-        public async Task RegisterMethods_RegistersAllProtocolMethods()
+        public void RegisterMethods_RegistersAllProtocolMethods()
         {
             // Arrange
             var handler = CreateHandler();
@@ -442,6 +443,87 @@ namespace Andy.Acp.Tests.Protocol
             Assert.NotNull(result.Capabilities.Resources);
             Assert.True(result.Capabilities.Resources.Supported);
             Assert.Contains("file://", result.Capabilities.Resources.SupportedSchemes!);
+        }
+
+        [Fact]
+        public async Task JsonRpcProtocolException_PropagatesCorrectly()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            var jsonRpcHandler = new JsonRpcHandler(NullLogger<JsonRpcHandler>.Instance);
+            handler.RegisterMethods(jsonRpcHandler);
+
+            // Initialize once
+            var initRequest = new JsonRpcRequest
+            {
+                Method = "initialize",
+                Id = 1,
+                Params = new InitializeParams { ClientInfo = new ClientInfo { Name = "Test", Version = "1.0" } }
+            };
+            await jsonRpcHandler.HandleRequestAsync(initRequest);
+
+            // Act - Try to initialize again (should throw JsonRpcProtocolException)
+            var duplicateInitRequest = new JsonRpcRequest
+            {
+                Method = "initialize",
+                Id = 2,
+                Params = new InitializeParams { ClientInfo = new ClientInfo { Name = "Test", Version = "1.0" } }
+            };
+            var response = await jsonRpcHandler.HandleRequestAsync(duplicateInitRequest);
+
+            // Assert - Exception should be converted to error response
+            Assert.NotNull(response);
+            Assert.True(response.IsError);
+            Assert.Equal(JsonRpcErrorCodes.SessionAlreadyInitialized, response.Error!.Code);
+            Assert.Equal("Session already initialized", response.Error.Message);
+        }
+
+        [Fact]
+        public async Task SequentialInitializeAttempts_SecondFails()
+        {
+            // Arrange
+            var sessionManager = new SessionManager(NullLogger<SessionManager>.Instance);
+            var handler = new AcpProtocolHandler(sessionManager, _testServerInfo, _testServerCapabilities);
+
+            var initParams = new InitializeParams
+            {
+                ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
+            };
+
+            // Act - First initialization should succeed
+            await handler.HandleInitializeAsync(initParams);
+
+            // Second initialization should fail
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(async () =>
+            {
+                await handler.HandleInitializeAsync(initParams);
+            });
+
+            // Assert
+            Assert.Equal(JsonRpcErrorCodes.SessionAlreadyInitialized, exception.ErrorCode);
+            Assert.NotNull(handler.CurrentSession);
+        }
+
+        [Fact]
+        public async Task ConvertClientInfo_HandlesNullClientInfo()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            var initParams = new InitializeParams
+            {
+                ProtocolVersion = "1.0",
+                ClientInfo = null, // Null client info
+                Capabilities = new ClientCapabilities()
+            };
+
+            // Act
+            var result = await handler.HandleInitializeAsync(initParams) as InitializeResult;
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.NotNull(handler.CurrentSession);
+            // Session should still be created even with null client info
+            Assert.Null(handler.CurrentSession.Capabilities?.ClientInfo);
         }
     }
 }
