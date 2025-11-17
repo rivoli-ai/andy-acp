@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Andy.Acp.Core.JsonRpc;
+using Andy.Acp.Core.Protocol;
+using Andy.Acp.Core.Session;
 
 namespace Andy.Acp.Core.Tools
 {
@@ -14,6 +16,7 @@ namespace Andy.Acp.Core.Tools
     public class AcpToolsHandler
     {
         private readonly IAcpToolProvider _toolProvider;
+        private readonly AcpProtocolHandler? _protocolHandler;
         private readonly ILogger<AcpToolsHandler>? _logger;
 
         /// <summary>
@@ -24,9 +27,54 @@ namespace Andy.Acp.Core.Tools
         public AcpToolsHandler(
             IAcpToolProvider toolProvider,
             ILogger<AcpToolsHandler>? logger = null)
+            : this(toolProvider, null, logger)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the AcpToolsHandler class with protocol handler.
+        /// </summary>
+        /// <param name="toolProvider">The tool provider.</param>
+        /// <param name="protocolHandler">Optional protocol handler for session validation.</param>
+        /// <param name="logger">Optional logger.</param>
+        public AcpToolsHandler(
+            IAcpToolProvider toolProvider,
+            AcpProtocolHandler? protocolHandler,
+            ILogger<AcpToolsHandler>? logger = null)
         {
             _toolProvider = toolProvider ?? throw new ArgumentNullException(nameof(toolProvider));
+            _protocolHandler = protocolHandler;
             _logger = logger;
+        }
+
+        /// <summary>
+        /// Validates that the session is in a valid state for tool operations.
+        /// </summary>
+        private void ValidateSessionState()
+        {
+            if (_protocolHandler == null)
+            {
+                // No protocol handler means no session validation
+                return;
+            }
+
+            var session = _protocolHandler.CurrentSession;
+            if (session == null)
+            {
+                throw new JsonRpcProtocolException(
+                    JsonRpcErrorCodes.SessionNotInitialized,
+                    "No active session. Call initialize first."
+                );
+            }
+
+            if (session.State == SessionState.ShuttingDown ||
+                session.State == SessionState.Terminated)
+            {
+                throw new JsonRpcProtocolException(
+                    JsonRpcErrorCodes.InvalidRequest,
+                    "Session is shutting down or terminated. Tool operations are not allowed."
+                );
+            }
         }
 
         /// <summary>
@@ -39,6 +87,9 @@ namespace Andy.Acp.Core.Tools
         public async Task<object?> HandleToolsListAsync(object? parameters, CancellationToken cancellationToken = default)
         {
             _logger?.LogInformation("Processing tools/list request");
+
+            // Validate session state if protocol handler is available
+            ValidateSessionState();
 
             try
             {
@@ -71,6 +122,9 @@ namespace Andy.Acp.Core.Tools
         public async Task<object?> HandleToolsCallAsync(object? parameters, CancellationToken cancellationToken = default)
         {
             _logger?.LogInformation("Processing tools/call request");
+
+            // Validate session state if protocol handler is available
+            ValidateSessionState();
 
             // Parse parameters
             ToolsCallParams? callParams = null;

@@ -31,7 +31,7 @@ andy-acp/
 │       ├── Protocol/               # ACP protocol (initialize, shutdown)
 │       └── Tools/                  # Tool framework (IAcpToolProvider, models)
 ├── tests/
-│   └── Andy.Acp.Tests/             # Comprehensive unit tests (233 tests)
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (239 tests)
 │       ├── Transport/
 │       ├── JsonRpc/
 │       ├── Session/
@@ -112,7 +112,7 @@ andy-acp/
 
 **Note**: This is the generic framework. Concrete andy-cli tools will use andy-tools library with an adapter pattern (see docs/TOOLS_COMPARISON.md).
 
-**Total: 233 tests passing**
+**Total: 239 tests passing**
 
 ## Building and Testing
 

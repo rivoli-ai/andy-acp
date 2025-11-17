@@ -703,4 +703,188 @@ namespace Andy.Acp.Tests.Tools
             Assert.DoesNotContain("\"Parameters\"", json);
         }
     }
+
+    public class AcpToolsHandler_SessionValidationTests
+    {
+        [Fact]
+        public async Task HandleToolsList_WithNoProtocolHandler_ExecutesSuccessfully()
+        {
+            // Arrange
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, null, NullLogger<AcpToolsHandler>.Instance);
+
+            // Act
+            var result = await handler.HandleToolsListAsync(null);
+
+            // Assert
+            Assert.NotNull(result);
+            var toolsList = Assert.IsType<ToolsListResult>(result);
+            Assert.NotEmpty(toolsList.Tools);
+        }
+
+        [Fact]
+        public async Task HandleToolsCall_WithNoProtocolHandler_ExecutesSuccessfully()
+        {
+            // Arrange
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, null, NullLogger<AcpToolsHandler>.Instance);
+            var parameters = new ToolsCallParams
+            {
+                Name = "echo",
+                Parameters = new Dictionary<string, object?> { ["text"] = "test" }
+            };
+
+            // Act
+            var result = await handler.HandleToolsCallAsync(parameters);
+
+            // Assert
+            Assert.NotNull(result);
+            var toolResult = Assert.IsType<AcpToolResult>(result);
+            Assert.False(toolResult.IsError);
+        }
+
+        [Fact]
+        public async Task HandleToolsList_WithNoSession_ThrowsException()
+        {
+            // Arrange
+            var sessionManager = new Andy.Acp.Core.Session.SessionManager();
+            var serverInfo = new Andy.Acp.Core.Protocol.ServerInfo
+            {
+                Name = "TestServer",
+                Version = "1.0.0"
+            };
+            var capabilities = new Andy.Acp.Core.Protocol.ServerCapabilities
+            {
+                Tools = new Andy.Acp.Core.Protocol.ToolsCapability { Supported = true }
+            };
+            var protocolHandler = new Andy.Acp.Core.Protocol.AcpProtocolHandler(
+                sessionManager,
+                serverInfo,
+                capabilities
+            );
+
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, protocolHandler, NullLogger<AcpToolsHandler>.Instance);
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(
+                async () => await handler.HandleToolsListAsync(null)
+            );
+            Assert.Equal(JsonRpcErrorCodes.SessionNotInitialized, exception.ErrorCode);
+        }
+
+        [Fact]
+        public async Task HandleToolsCall_WithNoSession_ThrowsException()
+        {
+            // Arrange
+            var sessionManager = new Andy.Acp.Core.Session.SessionManager();
+            var serverInfo = new Andy.Acp.Core.Protocol.ServerInfo
+            {
+                Name = "TestServer",
+                Version = "1.0.0"
+            };
+            var capabilities = new Andy.Acp.Core.Protocol.ServerCapabilities
+            {
+                Tools = new Andy.Acp.Core.Protocol.ToolsCapability { Supported = true }
+            };
+            var protocolHandler = new Andy.Acp.Core.Protocol.AcpProtocolHandler(
+                sessionManager,
+                serverInfo,
+                capabilities
+            );
+
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, protocolHandler, NullLogger<AcpToolsHandler>.Instance);
+            var parameters = new ToolsCallParams
+            {
+                Name = "echo",
+                Parameters = new Dictionary<string, object?> { ["text"] = "test" }
+            };
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(
+                async () => await handler.HandleToolsCallAsync(parameters)
+            );
+            Assert.Equal(JsonRpcErrorCodes.SessionNotInitialized, exception.ErrorCode);
+        }
+
+        [Fact]
+        public async Task HandleToolsList_WithShuttingDownSession_ThrowsException()
+        {
+            // Arrange
+            var sessionManager = new Andy.Acp.Core.Session.SessionManager();
+            var serverInfo = new Andy.Acp.Core.Protocol.ServerInfo
+            {
+                Name = "TestServer",
+                Version = "1.0.0"
+            };
+            var capabilities = new Andy.Acp.Core.Protocol.ServerCapabilities
+            {
+                Tools = new Andy.Acp.Core.Protocol.ToolsCapability { Supported = true }
+            };
+            var protocolHandler = new Andy.Acp.Core.Protocol.AcpProtocolHandler(
+                sessionManager,
+                serverInfo,
+                capabilities
+            );
+
+            // Initialize session
+            await protocolHandler.HandleInitializeAsync(new Andy.Acp.Core.Protocol.InitializeParams());
+            await protocolHandler.HandleInitializedAsync(null);
+
+            // Shutdown the session
+            await protocolHandler.HandleShutdownAsync(null);
+
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, protocolHandler, NullLogger<AcpToolsHandler>.Instance);
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(
+                async () => await handler.HandleToolsListAsync(null)
+            );
+            Assert.Equal(JsonRpcErrorCodes.SessionNotInitialized, exception.ErrorCode);
+        }
+
+        [Fact]
+        public async Task HandleToolsCall_WithShuttingDownSession_ThrowsException()
+        {
+            // Arrange
+            var sessionManager = new Andy.Acp.Core.Session.SessionManager();
+            var serverInfo = new Andy.Acp.Core.Protocol.ServerInfo
+            {
+                Name = "TestServer",
+                Version = "1.0.0"
+            };
+            var capabilities = new Andy.Acp.Core.Protocol.ServerCapabilities
+            {
+                Tools = new Andy.Acp.Core.Protocol.ToolsCapability { Supported = true }
+            };
+            var protocolHandler = new Andy.Acp.Core.Protocol.AcpProtocolHandler(
+                sessionManager,
+                serverInfo,
+                capabilities
+            );
+
+            // Initialize session
+            await protocolHandler.HandleInitializeAsync(new Andy.Acp.Core.Protocol.InitializeParams());
+            await protocolHandler.HandleInitializedAsync(null);
+
+            // Shutdown the session
+            await protocolHandler.HandleShutdownAsync(null);
+
+            var provider = new SimpleToolProvider();
+            var handler = new AcpToolsHandler(provider, protocolHandler, NullLogger<AcpToolsHandler>.Instance);
+            var parameters = new ToolsCallParams
+            {
+                Name = "echo",
+                Parameters = new Dictionary<string, object?> { ["text"] = "test" }
+            };
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<JsonRpcProtocolException>(
+                async () => await handler.HandleToolsCallAsync(parameters)
+            );
+            Assert.Equal(JsonRpcErrorCodes.SessionNotInitialized, exception.ErrorCode);
+        }
+    }
 }
