@@ -44,7 +44,8 @@ andy-acp/
 │       ├── zed-settings.example.json
 │       └── test-server.sh
 ├── docs/
-│   └── TOOLS_COMPARISON.md         # Andy.Tools vs ACP interfaces analysis
+│   ├── TOOLS_COMPARISON.md         # Andy.Tools vs ACP interfaces analysis
+│   └── ZED_INTEGRATION_TESTING.md  # Comprehensive Zed testing guide
 └── Andy.Acp.sln
 ```
 
@@ -254,15 +255,23 @@ See `examples/Andy.Acp.Examples/README.md` for detailed Zed integration instruct
 
 ## Next Steps
 
-### [PENDING] Issue #7: Zed Integration Testing
-**Status: Not Started** | [Issue #7](https://github.com/rivoli-ai/andy-acp/issues/7)
+### [READY FOR TESTING] Issue #7: Zed Integration Testing
+**Status: Documentation Complete - Requires Zed Editor** | [Issue #7](https://github.com/rivoli-ai/andy-acp/issues/7)
 
-End-to-end testing with Zed editor:
+**Documentation Completed**:
+- Comprehensive testing guide created (docs/ZED_INTEGRATION_TESTING.md)
+- Example README updated with all 4 tools (echo, calculator, get_time, reverse_string)
+- Zed configuration example updated (zed-settings.example.json)
+- Automated test script available (test-server.sh)
+
+**Manual Testing Required** (requires Zed editor installation):
 - Verify protocol flow with real Zed client
-- Test tool execution through Zed (echo, calculator, get_time, reverse_string)
+- Test tool execution through Zed UI
 - Validate session lifecycle
 - Performance and reliability testing
 - Document any issues or improvements needed
+
+See `docs/ZED_INTEGRATION_TESTING.md` for complete testing checklist.
 
 ## Integration with Zed
 

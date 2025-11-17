@@ -8,7 +8,8 @@ This example demonstrates a working ACP (Agent Client Protocol) server implement
 - JSON-RPC 2.0 message handling over stdio transport
 - Session management with timeout tracking
 - Server capabilities advertisement
-- Example tool methods (ping, echo, test)
+- Tool framework with 4 example tools (echo, calculator, get_time, reverse_string)
+- tools/list and tools/call protocol methods
 - Graceful shutdown with pending request handling
 
 ## Running the Example
@@ -152,9 +153,21 @@ Once connected, the ACP server provides these capabilities to Zed:
 
 ### Available Tools
 
-- **ping**: Health check that returns current timestamp
-- **echo**: Echoes back any data you send
-- **test**: Demonstrates complex parameter handling
+- **echo**: Echoes back the provided text with timestamp
+  - Parameters: `text` (string, required)
+  - Example: `{"text": "Hello from Zed!"}`
+
+- **calculator**: Performs basic arithmetic operations
+  - Parameters: `operation` (add/subtract/multiply/divide), `a` (number), `b` (number)
+  - Example: `{"operation": "add", "a": 15, "b": 27}`
+
+- **get_time**: Returns the current date and time
+  - Parameters: `timezone` (string, optional, defaults to "UTC")
+  - Example: `{"timezone": "UTC"}`
+
+- **reverse_string**: Reverses the provided string
+  - Parameters: `text` (string, required)
+  - Example: `{"text": "Hello"}`
 
 ### Example Interaction
 
@@ -162,9 +175,10 @@ Once connected, the ACP server provides these capabilities to Zed:
 2. Server responds with server info and capabilities
 3. Zed sends `initialized` notification
 4. Session is now active
-5. Zed can call tools: `ping`, `echo`, `test`
-6. When done, Zed sends `shutdown` request
-7. Server gracefully terminates after completing pending requests
+5. Zed can discover tools via `tools/list`
+6. Zed can execute tools via `tools/call` with tool name and parameters
+7. When done, Zed sends `shutdown` request
+8. Server gracefully terminates after completing pending requests
 
 ## Server Capabilities
 
@@ -174,7 +188,7 @@ This example server advertises the following capabilities:
 {
   "tools": {
     "supported": true,
-    "available": ["echo", "ping", "test"],
+    "available": ["echo", "calculator", "get_time", "reverse_string"],
     "listSupported": true,
     "executionSupported": true
   },
@@ -206,8 +220,16 @@ Client (Zed)                    Server (Andy.Acp.Examples)
      |                                    |
      |========= Session Active ===========|
      |                                    |
-     |--------- tool requests ----------->|
-     |<-------- tool responses -----------|
+     |------- tools/list request -------->|
+     |                                    |
+     |<----- tools/list response ---------|
+     |  (tool definitions + schemas)      |
+     |                                    |
+     |------- tools/call request -------->|
+     |   (name: "calculator", params)     |
+     |                                    |
+     |<----- tools/call response ---------|
+     |        (tool result)               |
      |                                    |
      |------- shutdown request ---------->|
      |                                    |
@@ -251,19 +273,39 @@ All JSON-RPC messages use stdio:
 
 ### Adding New Tools
 
-1. Register method in `RegisterExampleMethods()`:
+1. Add to SimpleToolProvider or create your own IAcpToolProvider:
    ```csharp
-   handler.RegisterMethod("my_tool", async (parameters, ct) =>
-   {
-       // Tool implementation
-       return new { result = "data" };
-   });
+   toolProvider.RegisterTool(
+       new AcpToolDefinition
+       {
+           Name = "my_tool",
+           Description = "Description of my tool",
+           InputSchema = new AcpInputSchema
+           {
+               Properties = new Dictionary<string, object>
+               {
+                   ["param1"] = new
+                   {
+                       type = "string",
+                       description = "Parameter description"
+                   }
+               },
+               Required = new List<string> { "param1" }
+           }
+       },
+       parameters =>
+       {
+           // Tool implementation
+           var param = parameters?.GetValueOrDefault("param1")?.ToString();
+           return Task.FromResult(AcpToolResult.Success(new { result = "data" }));
+       }
+   );
    ```
 
-2. Add to server capabilities:
-   ```csharp
-   Available = new[] { "echo", "ping", "test", "my_tool" }
-   ```
+2. The tool will automatically be:
+   - Listed in server capabilities
+   - Discoverable via tools/list
+   - Executable via tools/call
 
 ### Supporting More Capabilities
 
