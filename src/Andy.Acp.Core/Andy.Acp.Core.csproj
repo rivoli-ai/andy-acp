@@ -4,10 +4,31 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>Andy.Acp.Core</PackageId>
+    <Title>Andy ACP Core</Title>
+    <Authors>Rivoli AI</Authors>
+    <Company>Rivoli AI</Company>
+    <Description>A lightweight .NET implementation of the Agent Client Protocol (ACP) for building AI agent servers that integrate with editors like Zed</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/rivoli-ai/andy-acp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/rivoli-ai/andy-acp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>acp;agent-client-protocol;ai;agents;zed;editor;tools;json-rpc;protocol</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>andy_acp_icon.png</PackageIcon>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\assets\andy_acp_icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
