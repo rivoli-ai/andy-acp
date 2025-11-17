@@ -1,6 +1,20 @@
 # andy-acp
 Andy's implementation of ACP (Agent Client Protocol)
 
+> **ALPHA RELEASE WARNING**
+>
+> This software is in ALPHA stage. **NO GUARANTEES** are made about its functionality, stability, or safety.
+>
+> **CRITICAL WARNINGS:**
+> - This library implements a protocol server that accepts and executes commands
+> - Security features are **NOT FULLY TESTED** and may have vulnerabilities
+> - **DO NOT USE** in production environments
+> - **DO NOT USE** on systems exposed to untrusted networks or clients
+> - **DO NOT USE** without proper security review and hardening
+> - The authors assume **NO RESPONSIBILITY** for security breaches, data loss, or system damage
+>
+> **USE AT YOUR OWN RISK**
+
 ## Overview
 
 This repository contains a C# implementation of the Agent Client Protocol (ACP), designed to enable AI agents to integrate with tools and editors like Zed. The implementation follows the ACP specification and provides a foundation for building ACP-compliant servers.
@@ -14,26 +28,29 @@ andy-acp/
 │       ├── Transport/              # Transport layer (stdio)
 │       ├── JsonRpc/                # JSON-RPC 2.0 implementation
 │       ├── Session/                # Session management
-│       └── Protocol/               # ACP protocol (initialize, shutdown)
+│       ├── Protocol/               # ACP protocol (initialize, shutdown)
+│       └── Tools/                  # Tool framework (IAcpToolProvider, models)
 ├── tests/
-│   └── Andy.Acp.Tests/             # Comprehensive unit tests (199 tests)
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (233 tests)
 │       ├── Transport/
 │       ├── JsonRpc/
 │       ├── Session/
-│       └── Protocol/
+│       ├── Protocol/
+│       └── Tools/
 ├── examples/
 │   └── Andy.Acp.Examples/          # Working ACP server example
 │       ├── Program.cs              # Server/client implementation
 │       ├── README.md               # Zed integration guide
 │       ├── zed-settings.example.json
 │       └── test-server.sh
-├── TOOLS_COMPARISON.md             # Andy.Tools vs ACP interfaces analysis
+├── docs/
+│   └── TOOLS_COMPARISON.md         # Andy.Tools vs ACP interfaces analysis
 └── Andy.Acp.sln
 ```
 
 ## Features Implemented
 
-### ✅ Issue #2: Stdio Transport Layer Foundation
+### [COMPLETE] Issue #2: Stdio Transport Layer Foundation
 **Status: Complete** | 17 tests | [Issue #2](https://github.com/rivoli-ai/andy-acp/issues/2)
 
 - **ITransport Interface**: Defines the contract for transport implementations
@@ -47,7 +64,7 @@ andy-acp/
 - **Structured Logging**: Microsoft.Extensions.Logging with stderr output
 - **Signal Handling**: POSIX signals for Unix systems, Console.CancelKeyPress for interactive mode
 
-### ✅ Issue #3: JSON-RPC 2.0 Message Handling
+### [COMPLETE] Issue #3: JSON-RPC 2.0 Message Handling
 **Status: Complete** | 86 tests | [Issue #3](https://github.com/rivoli-ai/andy-acp/issues/3)
 
 - **JsonRpcSerializer**: Serialization/deserialization of JSON-RPC 2.0 messages
@@ -58,7 +75,7 @@ andy-acp/
 - **Batch Support**: Process multiple requests in a single message
 - **Validation**: Strict JSON-RPC 2.0 specification compliance
 
-### ✅ Issue #4: Session Management and State Handling
+### [COMPLETE] Issue #4: Session Management and State Handling
 **Status: Complete** | 73 tests | [Issue #4](https://github.com/rivoli-ai/andy-acp/issues/4)
 
 - **AcpSession**: Session lifecycle management (Created → Initializing → Initialized → Active → ShuttingDown → Terminated)
@@ -69,7 +86,7 @@ andy-acp/
 - **Client Capabilities**: Store and manage client-provided capabilities
 - **Background Cleanup**: Automatic session cleanup for terminated sessions
 
-### ✅ Issue #5: Initialization Handshake Protocol
+### [COMPLETE] Issue #5: Initialization Handshake Protocol
 **Status: Complete** | 23 tests | [Issue #5](https://github.com/rivoli-ai/andy-acp/issues/5)
 
 - **AcpProtocolHandler**: Handles initialize, initialized, shutdown methods
@@ -80,7 +97,21 @@ andy-acp/
 - **State Management**: Validates requests based on session state
 - **Session Information**: Returns session ID, timeout, and metadata
 
-**Total: 199 tests passing**
+### [COMPLETE] Issue #6: Tool Framework
+**Status: Complete** | 34 tests | [Issue #6](https://github.com/rivoli-ai/andy-acp/issues/6)
+
+- **IAcpToolProvider**: Interface for tool registration and execution
+- **AcpToolsHandler**: Handles tools/list and tools/call protocol methods
+- **Tool Models**: AcpToolDefinition, AcpInputSchema, AcpToolResult (minimal, ACP-aligned)
+- **SimpleToolProvider**: Example implementation with 4 demonstration tools
+- **JSON Schema Support**: Parameter validation using JSON Schema (draft-07)
+- **Error Handling**: Graceful error responses for missing tools and execution failures
+- **Tool Registration**: Dynamic tool registration with async execution handlers
+- **Example Tools**: echo, calculator, get_time, reverse_string
+
+**Note**: This is the generic framework. Concrete andy-cli tools will use andy-tools library with an adapter pattern (see docs/TOOLS_COMPARISON.md).
+
+**Total: 233 tests passing**
 
 ## Building and Testing
 
@@ -151,7 +182,7 @@ Example ACP protocol flow:
   "protocolVersion":"1.0",
   "serverInfo":{"name":"Andy.Acp.Examples","version":"1.0.0"},
   "capabilities":{
-    "tools":{"supported":true,"available":["echo","ping","test"]},
+    "tools":{"supported":true,"available":["echo","calculator","get_time","reverse_string"]},
     "resources":{"supported":true},
     "logging":{"supported":true}
   },
@@ -161,17 +192,36 @@ Example ACP protocol flow:
 // 3. Client confirms with initialized notification
 {"jsonrpc":"2.0","method":"initialized","params":{}}
 
-// 4. Client can now call tools
-{"jsonrpc":"2.0","method":"ping","id":2,"params":{}}
+// 4. Client lists available tools
+{"jsonrpc":"2.0","method":"tools/list","id":2,"params":{}}
 
-// 5. Server responds
-{"jsonrpc":"2.0","id":2,"result":{"status":"pong","timestamp":"2025-11-16T23:21:08.071Z"}}
+// 5. Server returns tool definitions with JSON schemas
+{"jsonrpc":"2.0","id":2,"result":{
+  "tools":[
+    {"name":"echo","description":"Echoes back the provided text","inputSchema":{...}},
+    {"name":"calculator","description":"Performs basic arithmetic operations","inputSchema":{...}},
+    {"name":"get_time","description":"Returns the current date and time","inputSchema":{...}},
+    {"name":"reverse_string","description":"Reverses the provided string","inputSchema":{...}}
+  ]
+}}
 
-// 6. Client shuts down
-{"jsonrpc":"2.0","method":"shutdown","id":3,"params":{"reason":"Done"}}
+// 6. Client calls calculator tool
+{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{
+  "name":"calculator",
+  "parameters":{"operation":"add","a":15,"b":27}
+}}
 
-// 7. Server acknowledges
-{"jsonrpc":"2.0","id":3,"result":{"success":true,"message":"Session terminated successfully"}}
+// 7. Server executes tool and returns result
+{"jsonrpc":"2.0","id":3,"result":{
+  "result":{"operation":"add","a":15,"b":27,"result":42},
+  "isError":false
+}}
+
+// 8. Client shuts down
+{"jsonrpc":"2.0","method":"shutdown","id":4,"params":{"reason":"Done"}}
+
+// 9. Server acknowledges
+{"jsonrpc":"2.0","id":4,"result":{"success":true,"message":"Session terminated successfully"}}
 ```
 
 ## What the Example Does
@@ -181,13 +231,18 @@ The `examples/Andy.Acp.Examples` project demonstrates a working ACP server that 
 **Server Mode** (`--server`):
 - Listens for JSON-RPC messages on stdin
 - Sends responses to stdout (logs go to stderr)
-- Implements complete ACP protocol: initialize → initialized → tools → shutdown
-- Example tools: ping, echo, test
+- Implements complete ACP protocol: initialize → initialized → tools/list → tools/call → shutdown
+- **Example tools** (via SimpleToolProvider):
+  - **echo**: Echoes back text with timestamp
+  - **calculator**: Performs arithmetic (add, subtract, multiply, divide)
+  - **get_time**: Returns current time in UTC or local timezone
+  - **reverse_string**: Reverses a string and returns length
 - Session management with timeout tracking
 - Graceful shutdown with pending request handling
 
 **Client Mode** (`--client`):
-- Sends a series of test messages demonstrating ACP protocol
+- Sends a series of test messages demonstrating complete ACP protocol flow
+- Tests all 4 example tools with various parameters
 - Can be piped to server for testing: `--client | --server`
 
 **Zed Integration**:
@@ -199,26 +254,15 @@ See `examples/Andy.Acp.Examples/README.md` for detailed Zed integration instruct
 
 ## Next Steps
 
-### ⏳ Issue #6: Tool Framework
-**Status: In Progress** | [Issue #6](https://github.com/rivoli-ai/andy-acp/issues/6)
-
-Implement generic tool infrastructure for andy-acp:
-- `IAcpToolProvider` interface for tool registration and execution
-- `tools/list` handler to advertise available tools
-- `tools/call` handler to execute tools
-- Minimal ACP-aligned models (AcpToolDefinition, AcpInputSchema, AcpToolResult)
-- Working example with concrete tools
-
-**Note**: This provides the generic framework. Concrete andy-cli tool implementations will use andy-tools library with an adapter pattern (see TOOLS_COMPARISON.md).
-
-### ⏳ Issue #7: Zed Integration Testing
+### [PENDING] Issue #7: Zed Integration Testing
 **Status: Not Started** | [Issue #7](https://github.com/rivoli-ai/andy-acp/issues/7)
 
 End-to-end testing with Zed editor:
 - Verify protocol flow with real Zed client
-- Test tool execution through Zed
+- Test tool execution through Zed (echo, calculator, get_time, reverse_string)
 - Validate session lifecycle
 - Performance and reliability testing
+- Document any issues or improvements needed
 
 ## Integration with Zed
 

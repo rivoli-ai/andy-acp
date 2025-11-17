@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
@@ -10,6 +11,7 @@ using Andy.Acp.Core.Transport;
 using Andy.Acp.Core.JsonRpc;
 using Andy.Acp.Core.Session;
 using Andy.Acp.Core.Protocol;
+using Andy.Acp.Core.Tools;
 
 namespace Andy.Acp.Examples
 {
@@ -342,44 +344,60 @@ namespace Andy.Acp.Examples
                                 Description = "Example ACP client"
                             },
                             Capabilities = new {
-                                SupportedTools = new[] { "echo", "ping" }
+                                SupportedTools = new[] { "echo", "calculator" }
                             }
                         }
                     },
                     // Step 2: Send 'initialized' notification to confirm session is ready
                     new() {
                         Method = "initialized",
-                        // No Id = notification
                         Params = new { }
                     },
-                    // Step 3: Use the session - ping
+                    // Step 3: List available tools
                     new() {
-                        Method = "ping",
+                        Method = "tools/list",
                         Id = 2,
                         Params = new { }
                     },
-                    // Step 4: Use the session - echo
+                    // Step 4: Call echo tool
                     new() {
-                        Method = "echo",
+                        Method = "tools/call",
                         Id = 3,
-                        Params = new { text = "Hello, ACP Protocol!" }
+                        Params = new {
+                            Name = "echo",
+                            Parameters = new {
+                                text = "Hello from ACP tools!"
+                            }
+                        }
                     },
-                    // Step 5: Use the session - test
+                    // Step 5: Call calculator tool
                     new() {
-                        Method = "test",
+                        Method = "tools/call",
                         Id = 4,
-                        Params = new { data = new[] { 1, 2, 3, 4, 5 }, message = "Test data" }
+                        Params = new {
+                            Name = "calculator",
+                            Parameters = new {
+                                operation = "add",
+                                a = 15,
+                                b = 27
+                            }
+                        }
                     },
-                    // Step 6: Send a notification (no response expected)
+                    // Step 6: Call get_time tool
                     new() {
-                        Method = "notify",
-                        // No Id = notification
-                        Params = new { notification = "This is a notification (no response expected)" }
+                        Method = "tools/call",
+                        Id = 5,
+                        Params = new {
+                            Name = "get_time",
+                            Parameters = new {
+                                timezone = "UTC"
+                            }
+                        }
                     },
                     // Step 7: Shutdown the session gracefully
                     new() {
                         Method = "shutdown",
-                        Id = 5,
+                        Id = 6,
                         Params = new { Reason = "Client demonstration complete" }
                     }
                 };
@@ -422,12 +440,20 @@ namespace Andy.Acp.Examples
 
         static void RegisterExampleMethods(JsonRpcHandler handler, ILogger logger, ISessionManager sessionManager)
         {
-            // Register ACP protocol methods (initialize, initialized, shutdown) using the official ACP protocol handler
+            // Create tool provider with example tools
+            var toolProvider = new SimpleToolProvider();
+            var toolsList = toolProvider.ListToolsAsync().Result;
+            var toolNames = toolsList.Select(t => t.Name).ToArray();
+
+            logger.LogInformation("Created tool provider with {Count} tools: {Tools}",
+                toolNames.Length, string.Join(", ", toolNames));
+
+            // Register ACP protocol methods (initialize, initialized, shutdown)
             var serverInfo = new ServerInfo
             {
                 Name = "Andy.Acp.Examples",
                 Version = "1.0.0",
-                Description = "Example ACP server demonstrating protocol implementation"
+                Description = "Example ACP server demonstrating protocol implementation with tools"
             };
 
             var serverCapabilities = new ServerCapabilities
@@ -435,7 +461,7 @@ namespace Andy.Acp.Examples
                 Tools = new ToolsCapability
                 {
                     Supported = true,
-                    Available = new[] { "echo", "ping", "test" },
+                    Available = toolNames,
                     ListSupported = true,
                     ExecutionSupported = true
                 },
@@ -458,61 +484,12 @@ namespace Andy.Acp.Examples
             var protocolHandler = new AcpProtocolHandler(sessionManager, serverInfo, serverCapabilities, logger as ILogger<AcpProtocolHandler>);
             protocolHandler.RegisterMethods(handler);
 
-            logger.LogInformation("Registered ACP protocol methods: initialize, initialized, shutdown");
+            // Register tools handler
+            var toolsHandler = new AcpToolsHandler(toolProvider, logger as ILogger<AcpToolsHandler>);
+            toolsHandler.RegisterMethods(handler);
 
-            // Ping method - simple health check
-            handler.RegisterMethod("ping", (parameters, ct) =>
-            {
-                logger.LogInformation("Ping method called");
-                return Task.FromResult<object?>(new
-                {
-                    status = "pong",
-                    timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-                });
-            });
-
-            // Echo method - echoes back the input
-            handler.RegisterMethod("echo", (parameters, ct) =>
-            {
-                logger.LogInformation("Echo method called with parameters: {Parameters}", parameters);
-                var result = new
-                {
-                    echo = parameters,
-                    timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-                };
-                return Task.FromResult<object?>(result);
-            });
-
-            // Test method - demonstrates parameter handling
-            handler.RegisterMethod("test", (parameters, ct) =>
-            {
-                logger.LogInformation("Test method called with parameters: {Parameters}", parameters);
-                var result = new
-                {
-                    received = parameters,
-                    processed = true,
-                    timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                    server = "Andy.Acp.Examples"
-                };
-                return Task.FromResult<object?>(result);
-            });
-
-            // Notification method - demonstrates notifications (no response)
-            handler.RegisterMethod("notify", (parameters, ct) =>
-            {
-                logger.LogInformation("Notification received: {Parameters}", parameters);
-                // Notifications don't return responses
-                return Task.FromResult<object?>(null);
-            });
-
-            // Error method - demonstrates error handling
-            handler.RegisterMethod("error", (parameters, ct) =>
-            {
-                logger.LogWarning("Error method called, throwing test exception");
-                throw new InvalidOperationException("This is a test error to demonstrate error handling");
-            });
-
-            logger.LogInformation("Registered {Count} example JSON-RPC methods", handler.GetSupportedMethods().Length);
+            logger.LogInformation("Registered ACP protocol methods: initialize, initialized, shutdown, tools/list, tools/call");
+            logger.LogInformation("Available tools: {Tools}", string.Join(", ", toolNames));
         }
     }
 }
