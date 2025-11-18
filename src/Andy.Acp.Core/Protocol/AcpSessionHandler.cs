@@ -165,19 +165,11 @@ namespace Andy.Acp.Core.Protocol
                 _logger?.LogInformation("Prompt processing completed for session {SessionId}, stop reason: {StopReason}",
                     promptParams.SessionId, response.StopReason);
 
-                // Return the final response
+                // Return only stopReason (ACP protocol expects only this field)
+                // The actual message content was already sent via session/update notifications
                 return new
                 {
-                    message = response.Message,
-                    stopReason = response.StopReason.ToString().ToLowerInvariant(),
-                    toolCalls = response.ToolCalls,
-                    error = response.Error,
-                    usage = response.Usage != null ? new
-                    {
-                        inputTokens = response.Usage.InputTokens,
-                        outputTokens = response.Usage.OutputTokens,
-                        totalTokens = response.Usage.TotalTokens
-                    } : null
+                    stopReason = MapStopReason(response.StopReason)
                 };
             }
             catch (OperationCanceledException)
@@ -185,7 +177,6 @@ namespace Andy.Acp.Core.Protocol
                 _logger?.LogInformation("Prompt processing was cancelled");
                 return new
                 {
-                    message = "",
                     stopReason = "cancelled"
                 };
             }
@@ -314,6 +305,22 @@ namespace Andy.Acp.Core.Protocol
 
             var json = JsonSerializer.Serialize(parameters);
             return JsonSerializer.Deserialize<T>(json);
+        }
+
+        /// <summary>
+        /// Maps our StopReason enum to ACP protocol values
+        /// </summary>
+        private static string MapStopReason(StopReason stopReason)
+        {
+            return stopReason switch
+            {
+                StopReason.Completed => "end_turn",
+                StopReason.Cancelled => "cancelled",
+                StopReason.TokenLimit => "max_tokens",
+                StopReason.Error => "refusal",
+                StopReason.TimeLimit => "max_tokens",
+                _ => "end_turn"
+            };
         }
 
         // Request parameter classes
