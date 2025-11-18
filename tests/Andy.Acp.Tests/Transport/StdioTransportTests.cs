@@ -113,7 +113,8 @@ namespace Andy.Acp.Tests.Transport
             // Assert
             var output = _streamProvider.GetOutputData();
             var json = JsonSerializer.Serialize(testMessage);
-            var expectedOutput = $"Content-Length: {Encoding.UTF8.GetByteCount(json)}\r\n\r\n{json}";
+            // StdioTransport now uses line-delimited JSON format (not Content-Length headers)
+            var expectedOutput = $"{json}\r\n";
             Assert.Equal(expectedOutput, output);
         }
 
@@ -278,25 +279,9 @@ namespace Andy.Acp.Tests.Transport
             // Assert
             var output = _streamProvider.GetOutputData();
 
-            // Parse messages by looking for complete message patterns
-            var messages = new List<string>();
-            var currentPos = 0;
-
-            while (currentPos < output.Length)
-            {
-                var headerStart = output.IndexOf("Content-Length:", currentPos);
-                if (headerStart == -1) break;
-
-                var headerEnd = output.IndexOf("\r\n\r\n", headerStart);
-                if (headerEnd == -1)
-                {
-                    headerEnd = output.IndexOf("\n\n", headerStart);
-                    if (headerEnd == -1) break;
-                }
-
-                messages.Add($"Message found at position {headerStart}");
-                currentPos = headerEnd + 4;
-            }
+            // Parse messages using line-delimited JSON format (each line is a message)
+            var lines = output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var messages = lines.Where(line => line.Trim().StartsWith("{")).ToList();
 
             Assert.Equal(10, messages.Count);
         }

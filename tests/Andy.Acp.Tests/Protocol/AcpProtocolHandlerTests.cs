@@ -53,7 +53,7 @@ namespace Andy.Acp.Tests.Protocol
             var handler = CreateHandler();
             var initParams = new InitializeParams
             {
-                ProtocolVersion = "1.0",
+                ProtocolVersion = 1,
                 ClientInfo = new ClientInfo
                 {
                     Name = "TestClient",
@@ -73,14 +73,11 @@ namespace Andy.Acp.Tests.Protocol
             Assert.IsType<InitializeResult>(result);
             var initResult = (InitializeResult)result;
 
-            Assert.Equal("1.0", initResult.ProtocolVersion);
-            Assert.Equal("TestServer", initResult.ServerInfo.Name);
-            Assert.Equal("1.0.0", initResult.ServerInfo.Version);
-            Assert.NotNull(initResult.Capabilities);
-            Assert.NotNull(initResult.Capabilities.Tools);
-            Assert.True(initResult.Capabilities.Tools.Supported);
-            Assert.NotNull(initResult.SessionInfo);
-            Assert.NotEmpty(initResult.SessionInfo.SessionId);
+            Assert.Equal(1, initResult.ProtocolVersion);
+            Assert.NotNull(initResult.AgentInfo);
+            Assert.Equal("TestServer", initResult.AgentInfo.Name);
+            Assert.Equal("1.0.0", initResult.AgentInfo.Version);
+            Assert.NotNull(initResult.AgentCapabilities);
             Assert.NotNull(handler.CurrentSession);
             Assert.Equal(SessionState.Initialized, handler.CurrentSession.State);
         }
@@ -97,7 +94,7 @@ namespace Andy.Acp.Tests.Protocol
             // Assert
             Assert.NotNull(result);
             var initResult = (InitializeResult)result!;
-            Assert.Equal("1.0", initResult.ProtocolVersion);
+            Assert.Equal(1, initResult.ProtocolVersion);
             Assert.NotNull(handler.CurrentSession);
         }
 
@@ -108,8 +105,8 @@ namespace Andy.Acp.Tests.Protocol
             var handler = CreateHandler();
             var json = JsonSerializer.Serialize(new
             {
-                ProtocolVersion = "1.0",
-                ClientInfo = new
+                protocolVersion = 1,
+                clientInfo = new
                 {
                     Name = "TestClient",
                     Version = "1.0.0"
@@ -123,7 +120,7 @@ namespace Andy.Acp.Tests.Protocol
             // Assert
             Assert.NotNull(result);
             var initResult = (InitializeResult)result!;
-            Assert.Equal("1.0", initResult.ProtocolVersion);
+            Assert.Equal(1, initResult.ProtocolVersion);
             Assert.NotNull(handler.CurrentSession);
             Assert.NotNull(handler.CurrentSession.Capabilities?.ClientInfo);
             Assert.Equal("TestClient", handler.CurrentSession.Capabilities.ClientInfo.Name);
@@ -158,7 +155,7 @@ namespace Andy.Acp.Tests.Protocol
             var handler = CreateHandler();
             var initParams = new InitializeParams
             {
-                ProtocolVersion = "2.0", // Different version
+                ProtocolVersion = 2, // Different version
                 ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
             };
 
@@ -168,7 +165,7 @@ namespace Andy.Acp.Tests.Protocol
             // Assert
             Assert.NotNull(result);
             var initResult = (InitializeResult)result!;
-            Assert.Equal("1.0", initResult.ProtocolVersion); // Server returns its own version
+            Assert.Equal(1, initResult.ProtocolVersion); // Server returns its own version
             Assert.NotNull(handler.CurrentSession);
         }
 
@@ -306,7 +303,7 @@ namespace Andy.Acp.Tests.Protocol
             // Act - Initialize
             var initResult = await handler.HandleInitializeAsync(new InitializeParams
             {
-                ProtocolVersion = "1.0",
+                ProtocolVersion = 1,
                 ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" },
                 Capabilities = new ClientCapabilities
                 {
@@ -316,7 +313,7 @@ namespace Andy.Acp.Tests.Protocol
 
             Assert.NotNull(initResult);
             Assert.NotNull(handler.CurrentSession);
-            var sessionId = initResult.SessionInfo!.SessionId;
+            var sessionId = handler.CurrentSession.SessionId;
 
             // Act - Initialized
             await handler.HandleInitializedAsync(null);
@@ -436,13 +433,9 @@ namespace Andy.Acp.Tests.Protocol
 
             // Assert
             Assert.NotNull(result);
-            Assert.NotNull(result.Capabilities);
-            Assert.NotNull(result.Capabilities.Tools);
-            Assert.True(result.Capabilities.Tools.Supported);
-            Assert.Contains("test-tool", result.Capabilities.Tools.Available!);
-            Assert.NotNull(result.Capabilities.Resources);
-            Assert.True(result.Capabilities.Resources.Supported);
-            Assert.Contains("file://", result.Capabilities.Resources.SupportedSchemes!);
+            Assert.NotNull(result.AgentCapabilities);
+            Assert.NotNull(result.AgentCapabilities.PromptCapabilities);
+            Assert.NotNull(result.AgentCapabilities.McpCapabilities);
         }
 
         [Fact]
@@ -511,7 +504,7 @@ namespace Andy.Acp.Tests.Protocol
             var handler = CreateHandler();
             var initParams = new InitializeParams
             {
-                ProtocolVersion = "1.0",
+                ProtocolVersion = 1,
                 ClientInfo = null, // Null client info
                 Capabilities = new ClientCapabilities()
             };
@@ -623,7 +616,7 @@ namespace Andy.Acp.Tests.Protocol
             var request = new JsonRpcRequest { Method = "slow-test", Id = 1 };
             handler.CurrentSession!.AddPendingRequest(request);
 
-            Assert.Equal(1, handler.CurrentSession.PendingRequests.Count);
+            Assert.Single(handler.CurrentSession.PendingRequests);
 
             // Act - Shutdown should timeout waiting for the request
             var result = await handler.HandleShutdownAsync(null) as ShutdownResult;
@@ -644,7 +637,7 @@ namespace Andy.Acp.Tests.Protocol
                 ClientInfo = new ClientInfo { Name = "TestClient", Version = "1.0.0" }
             });
 
-            Assert.Equal(0, handler.CurrentSession!.PendingRequests.Count);
+            Assert.Empty(handler.CurrentSession!.PendingRequests);
 
             // Act
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
