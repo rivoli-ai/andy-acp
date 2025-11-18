@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Andy.Acp.Core.Agent;
@@ -128,7 +131,17 @@ namespace Andy.Acp.Core.Protocol
                         "Session ID is required");
                 }
 
-                if (promptParams.Prompt == null || string.IsNullOrEmpty(promptParams.Prompt.Text))
+                if (promptParams.PromptBlocks == null || promptParams.PromptBlocks.Count == 0)
+                {
+                    throw new JsonRpcProtocolException(
+                        JsonRpcErrorCodes.InvalidParams,
+                        "Prompt content is required");
+                }
+
+                // Convert content blocks to PromptMessage
+                var promptMessage = promptParams.ToPromptMessage();
+
+                if (string.IsNullOrEmpty(promptMessage.Text))
                 {
                     throw new JsonRpcProtocolException(
                         JsonRpcErrorCodes.InvalidParams,
@@ -137,7 +150,7 @@ namespace Andy.Acp.Core.Protocol
 
                 _logger?.LogInformation("Processing prompt for session {SessionId}: {PromptPreview}",
                     promptParams.SessionId,
-                    promptParams.Prompt.Text.Substring(0, Math.Min(50, promptParams.Prompt.Text.Length)));
+                    promptMessage.Text.Substring(0, Math.Min(50, promptMessage.Text.Length)));
 
                 // Create a response streamer that sends session/update notifications
                 var streamer = new SessionUpdateStreamer(_jsonRpcHandler, promptParams.SessionId, _logger);
@@ -145,7 +158,7 @@ namespace Andy.Acp.Core.Protocol
                 // Process the prompt through the agent
                 var response = await _agentProvider.ProcessPromptAsync(
                     promptParams.SessionId,
-                    promptParams.Prompt,
+                    promptMessage,
                     streamer,
                     cancellationToken);
 
@@ -306,29 +319,73 @@ namespace Andy.Acp.Core.Protocol
         // Request parameter classes
         private class LoadSessionRequest
         {
+            [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
         }
 
         private class PromptRequest
         {
+            [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
-            public PromptMessage Prompt { get; set; } = new();
+
+            [JsonPropertyName("prompt")]
+            public List<ContentBlock>? PromptBlocks { get; set; }
+
+            // Helper to convert to PromptMessage
+            public PromptMessage ToPromptMessage()
+            {
+                var message = new PromptMessage();
+
+                if (PromptBlocks == null || PromptBlocks.Count == 0)
+                    return message;
+
+                // Combine all text blocks
+                var textParts = PromptBlocks
+                    .Where(b => b.Type == "text" && !string.IsNullOrEmpty(b.Text))
+                    .Select(b => b.Text!);
+
+                message.Text = string.Join("\n", textParts);
+
+                return message;
+            }
+        }
+
+        private class ContentBlock
+        {
+            [JsonPropertyName("type")]
+            public string Type { get; set; } = string.Empty;
+
+            [JsonPropertyName("text")]
+            public string? Text { get; set; }
+
+            [JsonPropertyName("data")]
+            public string? Data { get; set; }
+
+            [JsonPropertyName("mimeType")]
+            public string? MimeType { get; set; }
         }
 
         private class SetModeRequest
         {
+            [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
+
+            [JsonPropertyName("mode")]
             public string Mode { get; set; } = string.Empty;
         }
 
         private class SetModelRequest
         {
+            [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
+
+            [JsonPropertyName("model")]
             public string Model { get; set; } = string.Empty;
         }
 
         private class CancelRequest
         {
+            [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
         }
     }
