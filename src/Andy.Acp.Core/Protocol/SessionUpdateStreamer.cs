@@ -36,8 +36,15 @@ namespace Andy.Acp.Core.Protocol
                 await SendNotificationAsync(new
                 {
                     sessionId = _sessionId,
-                    type = "message_chunk",
-                    data = new { text }
+                    update = new
+                    {
+                        content = new
+                        {
+                            type = "text",
+                            text
+                        },
+                        sessionUpdate = "agent_message_chunk"
+                    }
                 }, cancellationToken);
             }
             catch (Exception ex)
