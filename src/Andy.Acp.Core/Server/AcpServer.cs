@@ -136,6 +136,7 @@ namespace Andy.Acp.Core.Server
                     _agentProvider,
                     jsonRpcHandler,
                     _loggerFactory?.CreateLogger<AcpSessionHandler>());
+                sessionHandler.SetTransport(transport);  // Enable sending session/update notifications
                 sessionHandler.RegisterMethods();
 
                 // Register file system handler if provider is available

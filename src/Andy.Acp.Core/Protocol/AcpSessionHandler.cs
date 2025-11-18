@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Andy.Acp.Core.Agent;
 using Andy.Acp.Core.JsonRpc;
+using Andy.Acp.Core.Transport;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Acp.Core.Protocol
@@ -19,6 +20,7 @@ namespace Andy.Acp.Core.Protocol
         private readonly IAgentProvider _agentProvider;
         private readonly ILogger<AcpSessionHandler>? _logger;
         private readonly JsonRpcHandler _jsonRpcHandler;
+        private ITransport? _transport;
 
         public AcpSessionHandler(
             IAgentProvider agentProvider,
@@ -28,6 +30,14 @@ namespace Andy.Acp.Core.Protocol
             _agentProvider = agentProvider ?? throw new ArgumentNullException(nameof(agentProvider));
             _jsonRpcHandler = jsonRpcHandler ?? throw new ArgumentNullException(nameof(jsonRpcHandler));
             _logger = logger;
+        }
+
+        /// <summary>
+        /// Sets the transport for sending notifications
+        /// </summary>
+        public void SetTransport(ITransport transport)
+        {
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         }
 
         /// <summary>
@@ -153,7 +163,7 @@ namespace Andy.Acp.Core.Protocol
                     promptMessage.Text.Substring(0, Math.Min(50, promptMessage.Text.Length)));
 
                 // Create a response streamer that sends session/update notifications
-                var streamer = new SessionUpdateStreamer(_jsonRpcHandler, promptParams.SessionId, _logger);
+                var streamer = new SessionUpdateStreamer(_transport, promptParams.SessionId, _logger);
 
                 // Process the prompt through the agent
                 var response = await _agentProvider.ProcessPromptAsync(

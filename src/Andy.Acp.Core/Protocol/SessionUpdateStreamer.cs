@@ -1,8 +1,10 @@
 using System;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Andy.Acp.Core.Agent;
 using Andy.Acp.Core.JsonRpc;
+using Andy.Acp.Core.Transport;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Acp.Core.Protocol
@@ -13,16 +15,16 @@ namespace Andy.Acp.Core.Protocol
     /// </summary>
     public class SessionUpdateStreamer : IResponseStreamer
     {
-        private readonly JsonRpcHandler _jsonRpcHandler;
+        private readonly ITransport? _transport;
         private readonly string _sessionId;
         private readonly ILogger? _logger;
 
         public SessionUpdateStreamer(
-            JsonRpcHandler jsonRpcHandler,
+            ITransport? transport,
             string sessionId,
             ILogger? logger = null)
         {
-            _jsonRpcHandler = jsonRpcHandler ?? throw new ArgumentNullException(nameof(jsonRpcHandler));
+            _transport = transport;
             _sessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
             _logger = logger;
         }
@@ -126,16 +128,34 @@ namespace Andy.Acp.Core.Protocol
             }
         }
 
-        private Task SendNotificationAsync(object data, CancellationToken cancellationToken)
+        private async Task SendNotificationAsync(object data, CancellationToken cancellationToken)
         {
-            // TODO: Implement notification sending through transport
-            // For now, we just log the notification
-            // In a full implementation, this would create a JSON-RPC notification message
-            // and send it through the transport layer
+            if (_transport == null)
+            {
+                _logger?.LogWarning("Transport not set, cannot send session/update notification");
+                return;
+            }
 
-            _logger?.LogTrace("Session update notification for session {SessionId}: {Data}", _sessionId, data);
+            try
+            {
+                // Create JSON-RPC notification (no id means it's a notification, not a request)
+                var notification = new
+                {
+                    jsonrpc = "2.0",
+                    method = "session/update",
+                    @params = data
+                };
 
-            return Task.CompletedTask;
+                var notificationJson = JsonSerializer.Serialize(notification);
+
+                _logger?.LogTrace("Sending session/update notification: {Notification}", notificationJson);
+
+                await _transport.WriteMessageAsync(notificationJson, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Failed to send session/update notification");
+            }
         }
     }
 }
