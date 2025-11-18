@@ -25,11 +25,15 @@ This repository contains a C# implementation of the Agent Client Protocol (ACP),
 andy-acp/
 ├── src/
 │   └── Andy.Acp.Core/              # Core ACP library
-│       ├── Transport/              # Transport layer (stdio)
+│       ├── Transport/              # Transport layer (stdio, line-delimited JSON)
 │       ├── JsonRpc/                # JSON-RPC 2.0 implementation
 │       ├── Session/                # Session management
-│       ├── Protocol/               # ACP protocol (initialize, shutdown)
-│       └── Tools/                  # Tool framework (IAcpToolProvider, models)
+│       ├── Protocol/               # ACP protocol handlers
+│       ├── Agent/                  # Agent provider interfaces
+│       ├── FileSystem/             # File system provider interface
+│       ├── Terminal/               # Terminal provider interface
+│       ├── Server/                 # Unified ACP server
+│       └── Tools/                  # Tool framework (legacy/MCP compatibility)
 ├── tests/
 │   └── Andy.Acp.Tests/             # Comprehensive unit tests (239 tests)
 │       ├── Transport/
@@ -38,7 +42,12 @@ andy-acp/
 │       ├── Protocol/
 │       └── Tools/
 ├── examples/
-│   └── Andy.Acp.Examples/          # Working ACP server example
+│   ├── SimpleEchoAgent/            # Minimal working example
+│   │   ├── SimpleEchoAgentProvider.cs
+│   │   ├── Program.cs
+│   │   ├── SimpleEchoAgent.csproj
+│   │   └── README.md
+│   └── Andy.Acp.Examples/          # Full-featured ACP server example
 │       ├── Program.cs              # Server/client implementation
 │       ├── README.md               # Zed integration guide
 │       ├── zed-settings.example.json
@@ -56,7 +65,9 @@ andy-acp/
 
 - **ITransport Interface**: Defines the contract for transport implementations
 - **StdioTransport Class**: Implements stdio-based communication with:
-  - Content-Length header framing (following LSP/ACP specification)
+  - **Dual format support**: Auto-detects Content-Length headers OR line-delimited JSON
+  - **Line-delimited JSON**: Newline-separated messages (Zed/Gemini style)
+  - **Content-Length framing**: Traditional LSP/MCP style (backwards compatible)
   - Async read/write operations with cancellation token support
   - Proper stream handling and disposal
   - Comprehensive error handling and EOF detection
@@ -112,6 +123,35 @@ andy-acp/
 
 **Note**: This is the generic framework. Concrete andy-cli tools will use andy-tools library with an adapter pattern (see docs/TOOLS_COMPARISON.md).
 
+### [COMPLETE] Agent Provider Interface & Session Management
+**Status: Complete** | Integrated with Andy.CLI
+
+- **IAgentProvider**: Core interface for implementing ACP-compatible agents
+- **IResponseStreamer**: Interface for streaming responses to clients
+- **Session Methods**: session/new, session/load, session/prompt, session/cancel, session/set_mode, session/set_model
+- **SessionUpdateStreamer**: Sends session/update notifications for streaming responses
+- **AcpSessionHandler**: Handles all session/* protocol methods
+- **AcpServer**: Unified server that composes all handlers and providers
+- **Working Integration**: Andy.CLI successfully integrates via AndyAgentProvider
+
+**Agent Protocol Flow**:
+1. Client sends `initialize` with protocol version
+2. Server responds with capabilities (agent, filesystem, terminal)
+3. Client sends `session/new` to create conversation session
+4. Server returns session metadata
+5. Client sends `session/prompt` with user message
+6. Server streams response via `session/update` notifications
+7. Server returns stopReason when complete
+
+### [COMPLETE] Zed Editor Integration
+**Status: Working** | Tested with Andy.CLI
+
+- **Line-delimited JSON** transport working with Zed
+- **SimpleEchoAgent** example provides minimal working implementation
+- **Andy.CLI** integration providing full LLM + tools via ACP
+- **Response streaming** working (word-by-word display in Zed)
+- **Session management** properly tracking conversation state
+
 **Total: 239 tests passing**
 
 ## Building and Testing
@@ -130,6 +170,25 @@ dotnet test
 ```
 
 ### Run Examples
+
+#### SimpleEchoAgent (Minimal Example)
+
+Perfect for learning and testing:
+
+```bash
+# Build and run
+dotnet build examples/SimpleEchoAgent -c Release
+dotnet run --project examples/SimpleEchoAgent -- --acp
+
+# Or use the published binary
+dotnet run --project examples/SimpleEchoAgent -- --help
+```
+
+See `examples/SimpleEchoAgent/README.md` for Zed configuration.
+
+#### Andy.Acp.Examples (Full-Featured)
+
+Demonstrates complete protocol with tools:
 
 ```bash
 # Show usage help
@@ -151,131 +210,171 @@ dotnet run --project examples/Andy.Acp.Examples -- --client | \
 
 ### Test with Zed Editor
 
-See detailed instructions in `examples/Andy.Acp.Examples/README.md`.
+**Recommended**: Start with SimpleEchoAgent for a working baseline.
 
 Quick start:
-1. Build: `dotnet build examples/Andy.Acp.Examples`
-2. Copy `zed-settings.example.json` configuration to `~/.config/zed/settings.json`
-3. Update paths in configuration
-4. Open Zed and press `Cmd+?` (macOS) or `Ctrl+?` (Windows/Linux)
+1. Build: `dotnet build examples/SimpleEchoAgent -c Release`
+2. Add to `~/.config/zed/settings.json`:
+```json
+{
+  "agent": {
+    "provider": {
+      "name": "custom",
+      "command": "/path/to/andy-acp/examples/SimpleEchoAgent/bin/Release/net8.0/SimpleEchoAgent",
+      "args": ["--acp"]
+    }
+  }
+}
+```
+3. Restart Zed and open Assistant panel
+4. Type a message - you should see it echoed back!
+
+See `examples/SimpleEchoAgent/README.md` and `examples/Andy.Acp.Examples/README.md` for detailed instructions.
 
 ## Message Format
 
-The transport layer implements the standard ACP message framing:
+The transport layer supports two message formats:
 
+### Line-Delimited JSON (Default for Zed)
+```
+{"jsonrpc":"2.0","method":"initialize","id":1,"params":{...}}
+{"jsonrpc":"2.0","id":1,"result":{...}}
+```
+
+Each message is a single line terminated by `\n`. This is the format used by Zed and Gemini CLI.
+
+### Content-Length Headers (LSP/MCP Compatible)
 ```
 Content-Length: <length>\r\n
 \r\n
 <JSON message body>
 ```
 
-Example ACP protocol flow:
+The transport auto-detects which format is being used.
+
+## Protocol Flow
+
+### Agent Session Flow (Primary)
 ```json
 // 1. Client sends initialize
-{"jsonrpc":"2.0","method":"initialize","id":1,"params":{
-  "protocolVersion":"1.0",
-  "clientInfo":{"name":"Zed","version":"0.1.0"},
-  "capabilities":{"supportedTools":["echo","ping"]}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+  "protocolVersion":1,
+  "clientCapabilities":{"promptFormats":{"text":true}}
 }}
 
 // 2. Server responds with capabilities
 {"jsonrpc":"2.0","id":1,"result":{
-  "protocolVersion":"1.0",
-  "serverInfo":{"name":"Andy.Acp.Examples","version":"1.0.0"},
+  "protocolVersion":1,
+  "serverInfo":{"name":"Andy.CLI","version":"1.0.0"},
   "capabilities":{
-    "tools":{"supported":true,"available":["echo","calculator","get_time","reverse_string"]},
-    "resources":{"supported":true},
-    "logging":{"supported":true}
-  },
-  "sessionInfo":{"sessionId":"abc123","timeoutMs":1800000}
+    "loadSession":true,
+    "audioPrompts":false,
+    "imagePrompts":false,
+    "embeddedContext":true
+  }
 }}
 
-// 3. Client confirms with initialized notification
-{"jsonrpc":"2.0","method":"initialized","params":{}}
+// 3. Client creates a new session
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
 
-// 4. Client lists available tools
-{"jsonrpc":"2.0","method":"tools/list","id":2,"params":{}}
-
-// 5. Server returns tool definitions with JSON schemas
+// 4. Server returns session metadata
 {"jsonrpc":"2.0","id":2,"result":{
-  "tools":[
-    {"name":"echo","description":"Echoes back the provided text","inputSchema":{...}},
-    {"name":"calculator","description":"Performs basic arithmetic operations","inputSchema":{...}},
-    {"name":"get_time","description":"Returns the current date and time","inputSchema":{...}},
-    {"name":"reverse_string","description":"Reverses the provided string","inputSchema":{...}}
-  ]
+  "sessionId":"session-abc123",
+  "createdAt":"2025-11-18T05:00:00Z",
+  "mode":"assistant",
+  "model":"andy-cli"
 }}
 
-// 6. Client calls calculator tool
-{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{
-  "name":"calculator",
-  "parameters":{"operation":"add","a":15,"b":27}
+// 5. Client sends a prompt
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
+  "sessionId":"session-abc123",
+  "prompt":[{"type":"text","text":"Hello! What is 15 + 27?"}]
 }}
 
-// 7. Server executes tool and returns result
-{"jsonrpc":"2.0","id":3,"result":{
-  "result":{"operation":"add","a":15,"b":27,"result":42},
-  "isError":false
+// 6. Server streams response via session/update notifications
+{"jsonrpc":"2.0","method":"session/update","params":{
+  "sessionId":"session-abc123",
+  "update":{
+    "content":{"type":"text","text":"Hello! "},
+    "sessionUpdate":"agent_message_chunk"
+  }
+}}
+{"jsonrpc":"2.0","method":"session/update","params":{
+  "sessionId":"session-abc123",
+  "update":{
+    "content":{"type":"text","text":"15 + 27 = 42"},
+    "sessionUpdate":"agent_message_chunk"
+  }
 }}
 
-// 8. Client shuts down
-{"jsonrpc":"2.0","method":"shutdown","id":4,"params":{"reason":"Done"}}
-
-// 9. Server acknowledges
-{"jsonrpc":"2.0","id":4,"result":{"success":true,"message":"Session terminated successfully"}}
+// 7. Server returns final stopReason
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
 ```
 
-## What the Example Does
+### Tool-Based Flow (Legacy/MCP Compatible)
+The library also supports the traditional MCP-style tools/list and tools/call methods. See `examples/Andy.Acp.Examples` for a demonstration.
 
-The `examples/Andy.Acp.Examples` project demonstrates a working ACP server that can be used with Zed editor:
+## Examples
 
-**Server Mode** (`--server`):
-- Listens for JSON-RPC messages on stdin
-- Sends responses to stdout (logs go to stderr)
-- Implements complete ACP protocol: initialize → initialized → tools/list → tools/call → shutdown
-- **Example tools** (via SimpleToolProvider):
-  - **echo**: Echoes back text with timestamp
-  - **calculator**: Performs arithmetic (add, subtract, multiply, divide)
-  - **get_time**: Returns current time in UTC or local timezone
-  - **reverse_string**: Reverses a string and returns length
-- Session management with timeout tracking
-- Graceful shutdown with pending request handling
+### SimpleEchoAgent (Recommended for Learning)
 
-**Client Mode** (`--client`):
-- Sends a series of test messages demonstrating complete ACP protocol flow
-- Tests all 4 example tools with various parameters
-- Can be piped to server for testing: `--client | --server`
+A minimal 150-line example demonstrating core concepts:
+- **IAgentProvider** implementation with session management
+- **Response streaming** via IResponseStreamer
+- **ACP server setup** with minimal configuration
+- **Perfect for learning** and testing Zed integration
 
-**Zed Integration**:
-- Includes `zed-settings.example.json` with ready-to-use configuration
-- Includes comprehensive `README.md` with setup instructions
-- Includes `test-server.sh` for automated testing
+See `examples/SimpleEchoAgent/README.md` for setup instructions.
 
-See `examples/Andy.Acp.Examples/README.md` for detailed Zed integration instructions.
+### Andy.Acp.Examples (Full-Featured)
 
-## Next Steps
+Demonstrates the complete ACP protocol with tools support:
+- Traditional **tools/list** and **tools/call** methods (MCP-compatible)
+- Example tools: echo, calculator, get_time, reverse_string
+- Client/server test modes
+- Comprehensive protocol flow demonstration
 
-### [READY FOR TESTING] Issue #7: Zed Integration Testing
-**Status: Documentation Complete - Requires Zed Editor** | [Issue #7](https://github.com/rivoli-ai/andy-acp/issues/7)
+See `examples/Andy.Acp.Examples/README.md` for details.
 
-**Documentation Completed**:
-- Comprehensive testing guide created (docs/ZED_INTEGRATION_TESTING.md)
-- Example README updated with all 4 tools (echo, calculator, get_time, reverse_string)
-- Zed configuration example updated (zed-settings.example.json)
-- Automated test script available (test-server.sh)
+### Andy.CLI Integration (Production)
 
-**Manual Testing Required** (requires Zed editor installation):
-- Verify protocol flow with real Zed client
-- Test tool execution through Zed UI
-- Validate session lifecycle
-- Performance and reliability testing
-- Document any issues or improvements needed
+Full LLM-powered agent working in Zed:
+- Complete **session/prompt** implementation with streaming
+- **All Andy tools** available via tool execution
+- **Real LLM reasoning** (OpenAI, Anthropic, Gemini, Cerebras, Ollama)
+- Production-ready agent experience
 
-See `docs/ZED_INTEGRATION_TESTING.md` for complete testing checklist.
+The integration is in the [andy-cli repository](https://github.com/rivoli-ai/andy-cli) via `AndyAgentProvider.cs`.
 
-## Integration with Zed
+## Status & Next Steps
 
-Once the full ACP implementation is complete, the server can be integrated with Zed editor by configuring it as an assistant in Zed's settings.
+### [COMPLETE] Zed Integration
+**Status: Working** | Successfully tested with Andy.CLI
+
+✓ **Protocol Implementation**:
+- Line-delimited JSON transport (Zed-compatible)
+- session/new, session/load, session/prompt methods
+- session/update streaming notifications
+- Property name mapping (camelCase ↔ PascalCase)
+
+✓ **Working Examples**:
+- SimpleEchoAgent: Minimal working example (echoes messages)
+- Andy.CLI: Full LLM + tools integration
+
+✓ **Tested Features**:
+- Session creation and management
+- Response streaming (word-by-word display)
+- Multiple conversation turns
+- Graceful error handling
+
+### Future Enhancements
+
+Potential additions for future releases:
+- **File System Provider**: Implement `fs/read_text_file` and `fs/write_text_file`
+- **Terminal Provider**: Implement `terminal/create` and related methods
+- **Permission System**: Add `session/request_permission` for sensitive operations
+- **Audio/Image Support**: Enable multimodal prompts
+- **Performance Optimizations**: Caching, batching, connection pooling
 
 ## Contributing
 
