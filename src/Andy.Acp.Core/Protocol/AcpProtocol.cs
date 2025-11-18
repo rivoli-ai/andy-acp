@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using Andy.Acp.Core.Session;
 
 namespace Andy.Acp.Core.Protocol
@@ -11,43 +12,120 @@ namespace Andy.Acp.Core.Protocol
         /// <summary>
         /// The protocol version supported by the client
         /// </summary>
-        public string? ProtocolVersion { get; set; }
+        [JsonPropertyName("protocolVersion")]
+        public int? ProtocolVersion { get; set; }
 
         /// <summary>
         /// Capabilities provided by the client
         /// </summary>
+        [JsonPropertyName("clientCapabilities")]
         public ClientCapabilities? Capabilities { get; set; }
 
         /// <summary>
         /// Information about the client
         /// </summary>
+        [JsonPropertyName("clientInfo")]
         public ClientInfo? ClientInfo { get; set; }
     }
 
     /// <summary>
-    /// Represents the result of the initialize request
+    /// Represents the result of the initialize request (ACP protocol)
     /// </summary>
     public class InitializeResult
     {
         /// <summary>
-        /// The protocol version supported by the server
+        /// The protocol version supported by the agent
         /// </summary>
-        public required string ProtocolVersion { get; set; }
+        public required int ProtocolVersion { get; set; }
 
         /// <summary>
-        /// Information about the server
+        /// Information about the agent
         /// </summary>
-        public required ServerInfo ServerInfo { get; set; }
+        public AgentInfo? AgentInfo { get; set; }
 
         /// <summary>
-        /// Capabilities provided by the server
+        /// Capabilities provided by the agent
         /// </summary>
-        public required ServerCapabilities Capabilities { get; set; }
+        public AgentCapabilitiesResponse? AgentCapabilities { get; set; }
 
         /// <summary>
-        /// Optional session information
+        /// Authentication methods supported by the agent
         /// </summary>
-        public SessionInfo? SessionInfo { get; set; }
+        public List<string>? AuthMethods { get; set; }
+    }
+
+    /// <summary>
+    /// Information about the agent
+    /// </summary>
+    public class AgentInfo
+    {
+        /// <summary>
+        /// Name of the agent
+        /// </summary>
+        public required string Name { get; set; }
+
+        /// <summary>
+        /// Version of the agent
+        /// </summary>
+        public required string Version { get; set; }
+    }
+
+    /// <summary>
+    /// Agent capabilities in the initialize response
+    /// </summary>
+    public class AgentCapabilitiesResponse
+    {
+        /// <summary>
+        /// Whether the agent supports loading existing sessions
+        /// </summary>
+        public bool LoadSession { get; set; }
+
+        /// <summary>
+        /// Prompt-related capabilities
+        /// </summary>
+        public PromptCapabilitiesResponse? PromptCapabilities { get; set; }
+
+        /// <summary>
+        /// MCP-related capabilities (if the agent supports MCP)
+        /// </summary>
+        public McpCapabilitiesResponse? McpCapabilities { get; set; }
+    }
+
+    /// <summary>
+    /// Prompt capabilities
+    /// </summary>
+    public class PromptCapabilitiesResponse
+    {
+        /// <summary>
+        /// Whether the agent supports audio in prompts
+        /// </summary>
+        public bool Audio { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports images in prompts
+        /// </summary>
+        public bool Image { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports embedded context in prompts
+        /// </summary>
+        public bool EmbeddedContext { get; set; }
+    }
+
+    /// <summary>
+    /// MCP capabilities
+    /// </summary>
+    public class McpCapabilitiesResponse
+    {
+        /// <summary>
+        /// Whether MCP HTTP transport is supported
+        /// </summary>
+        public bool Http { get; set; }
+
+        /// <summary>
+        /// Whether MCP SSE transport is supported
+        /// </summary>
+        public bool Sse { get; set; }
     }
 
     /// <summary>
@@ -100,6 +178,36 @@ namespace Andy.Acp.Core.Protocol
         /// Logging capability
         /// </summary>
         public LoggingCapability? Logging { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports loading existing sessions
+        /// </summary>
+        public bool LoadSession { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports audio in prompts
+        /// </summary>
+        public bool AudioPrompts { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports images in prompts
+        /// </summary>
+        public bool ImagePrompts { get; set; }
+
+        /// <summary>
+        /// Whether the agent supports embedded context in prompts
+        /// </summary>
+        public bool EmbeddedContext { get; set; }
+
+        /// <summary>
+        /// Whether file system operations are supported
+        /// </summary>
+        public bool FileSystemSupported { get; set; }
+
+        /// <summary>
+        /// Whether terminal operations are supported
+        /// </summary>
+        public bool TerminalSupported { get; set; }
 
         /// <summary>
         /// Additional custom capabilities

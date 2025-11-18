@@ -22,7 +22,7 @@ namespace Andy.Acp.Core.Protocol
         /// <summary>
         /// The supported ACP protocol version
         /// </summary>
-        public const string ProtocolVersion = "1.0";
+        public const int ProtocolVersion = 1;
 
         /// <summary>
         /// Initializes a new ACP protocol handler
@@ -99,11 +99,11 @@ namespace Andy.Acp.Core.Protocol
             initParams ??= new InitializeParams();
 
             // Validate protocol version
-            if (!string.IsNullOrEmpty(initParams.ProtocolVersion) &&
-                initParams.ProtocolVersion != ProtocolVersion)
+            if (initParams.ProtocolVersion.HasValue &&
+                initParams.ProtocolVersion.Value != ProtocolVersion)
             {
                 _logger?.LogWarning("Protocol version mismatch: client={ClientVersion}, server={ServerVersion}",
-                    initParams.ProtocolVersion, ProtocolVersion);
+                    initParams.ProtocolVersion.Value, ProtocolVersion);
 
                 // For now, we'll accept different versions but log a warning
                 // In a stricter implementation, you might reject incompatible versions
@@ -140,21 +140,31 @@ namespace Andy.Acp.Core.Protocol
 
             _logger?.LogInformation("Session {SessionId} initialized successfully", _currentSession.SessionId);
 
-            // Return initialize result
+            // Return initialize result (ACP protocol format)
             var result = new InitializeResult
             {
                 ProtocolVersion = ProtocolVersion,
-                ServerInfo = _serverInfo,
-                Capabilities = _serverCapabilities,
-                SessionInfo = new SessionInfo
+                AgentInfo = new AgentInfo
                 {
-                    SessionId = _currentSession.SessionId,
-                    TimeoutMs = (int)_sessionManager.DefaultSessionTimeout.TotalMilliseconds,
-                    Metadata = new System.Collections.Generic.Dictionary<string, object>
+                    Name = _serverInfo.Name,
+                    Version = _serverInfo.Version
+                },
+                AgentCapabilities = new AgentCapabilitiesResponse
+                {
+                    LoadSession = _serverCapabilities.LoadSession,
+                    PromptCapabilities = new PromptCapabilitiesResponse
                     {
-                        ["createdAt"] = _currentSession.CreatedAt.ToString("O")
+                        Audio = _serverCapabilities.AudioPrompts,
+                        Image = _serverCapabilities.ImagePrompts,
+                        EmbeddedContext = _serverCapabilities.EmbeddedContext
+                    },
+                    McpCapabilities = new McpCapabilitiesResponse
+                    {
+                        Http = false,
+                        Sse = false
                     }
-                }
+                },
+                AuthMethods = new List<string>() // No authentication required for local agents
             };
 
             return await Task.FromResult(result);

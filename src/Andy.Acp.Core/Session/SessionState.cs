@@ -85,12 +85,12 @@ namespace Andy.Acp.Core.Session
         /// <summary>
         /// Name of the client application
         /// </summary>
-        public required string Name { get; set; }
+        public string? Name { get; set; }
 
         /// <summary>
         /// Version of the client application
         /// </summary>
-        public required string Version { get; set; }
+        public string? Version { get; set; }
 
         /// <summary>
         /// Optional description of the client
@@ -106,6 +106,11 @@ namespace Andy.Acp.Core.Session
         /// Optional contact information
         /// </summary>
         public string? Contact { get; set; }
+
+        /// <summary>
+        /// Optional title (sent by some clients like Zed)
+        /// </summary>
+        public string? Title { get; set; }
     }
 
     /// <summary>

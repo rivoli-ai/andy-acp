@@ -25,8 +25,22 @@ namespace Andy.Acp.Core.Transport
         /// </summary>
         /// <param name="logger">Optional logger instance</param>
         public StdioTransport(ILogger<StdioTransport>? logger = null)
-            : this(Console.OpenStandardInput(), Console.OpenStandardOutput(), logger)
         {
+            _logger = logger;
+
+            // Use the raw stdin/stdout streams
+            _inputStream = Console.OpenStandardInput();
+            _outputStream = Console.OpenStandardOutput();
+
+            // Create our own readers/writers with explicit settings
+            _reader = new StreamReader(_inputStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
+            _writer = new StreamWriter(_outputStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), bufferSize: 1024, leaveOpen: true)
+            {
+                AutoFlush = true,
+                NewLine = "\n" // Use LF only, not CRLF
+            };
+
+            _logger?.LogDebug("StdioTransport initialized using stdin/stdout with custom readers");
         }
 
         /// <summary>
@@ -201,36 +215,15 @@ namespace Andy.Acp.Core.Transport
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var stringBuilder = new StringBuilder();
-            int character;
+            // Use standard ReadLineAsync for better compatibility with piped stdin
+            var line = await _reader.ReadLineAsync();
 
-            while ((character = await ReadCharAsync(cancellationToken)) != -1)
-            {
-                if (character == '\r')
-                {
-                    // Peek at next character to handle \r\n
-                    if (_reader.Peek() == '\n')
-                    {
-                        await ReadCharAsync(cancellationToken); // consume \n
-                    }
-                    break;
-                }
-                else if (character == '\n')
-                {
-                    break;
-                }
-                else
-                {
-                    stringBuilder.Append((char)character);
-                }
-            }
-
-            if (character == -1 && stringBuilder.Length == 0)
+            if (line == null)
             {
                 throw new EndOfStreamException("Unexpected end of stream");
             }
 
-            return stringBuilder.ToString();
+            return line;
         }
 
         /// <summary>
