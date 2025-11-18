@@ -77,53 +77,30 @@ namespace Andy.Acp.Core.Transport
             {
                 _logger?.LogTrace("Reading message from stdin");
 
-                // Read headers until we find Content-Length
-                int contentLength = -1;
-                string headerLine;
+                // Read first line to detect format
+                string firstLine = await ReadLineAsync(cancellationToken);
 
-                while (true)
+                if (string.IsNullOrEmpty(firstLine))
                 {
-                    headerLine = await ReadLineAsync(cancellationToken);
-
-                    if (string.IsNullOrEmpty(headerLine))
-                    {
-                        // Empty line indicates end of headers
-                        if (contentLength == -1)
-                        {
-                            throw new InvalidOperationException("Missing Content-Length header");
-                        }
-                        break;
-                    }
-
-                    if (headerLine.StartsWith("Content-Length: ", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (!int.TryParse(headerLine.Substring(16), out contentLength) || contentLength < 0)
-                        {
-                            throw new InvalidOperationException($"Invalid Content-Length value: {headerLine}");
-                        }
-                    }
-                    // Ignore other headers
+                    throw new InvalidOperationException("Unexpected empty first line");
                 }
 
-                // Read message content
-                char[] buffer = new char[contentLength];
-                int totalRead = 0;
-
-                while (totalRead < contentLength)
+                // Check if it's Content-Length header or line-delimited JSON
+                if (firstLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    int bytesRead = await _reader.ReadAsync(buffer, totalRead, contentLength - totalRead);
-                    if (bytesRead == 0)
-                    {
-                        throw new InvalidOperationException("Unexpected end of stream while reading message content");
-                    }
-                    totalRead += bytesRead;
+                    // Content-Length header format (LSP/MCP style)
+                    return await ReadContentLengthMessageAsync(firstLine, cancellationToken);
                 }
-
-                string message = new string(buffer);
-                _logger?.LogTrace("Successfully read message of {Length} characters", contentLength);
-
-                return message;
+                else if (firstLine.TrimStart().StartsWith("{"))
+                {
+                    // Line-delimited JSON format (Zed/Gemini style)
+                    _logger?.LogTrace("Detected line-delimited JSON format");
+                    return firstLine.Trim();
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Unexpected message format. Line: {firstLine}");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -139,6 +116,62 @@ namespace Andy.Acp.Core.Transport
                 _logger?.LogError(ex, "Error reading message from stdin");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Reads a message using Content-Length header format
+        /// </summary>
+        private async Task<string> ReadContentLengthMessageAsync(string firstLine, CancellationToken cancellationToken)
+        {
+            int contentLength = -1;
+            string headerLine = firstLine;
+
+            // Parse Content-Length header
+            if (headerLine.StartsWith("Content-Length: ", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(headerLine.Substring(16), out contentLength) || contentLength < 0)
+                {
+                    throw new InvalidOperationException($"Invalid Content-Length value: {headerLine}");
+                }
+            }
+
+            // Read remaining headers until empty line
+            while (true)
+            {
+                headerLine = await ReadLineAsync(cancellationToken);
+
+                if (string.IsNullOrEmpty(headerLine))
+                {
+                    // Empty line indicates end of headers
+                    if (contentLength == -1)
+                    {
+                        throw new InvalidOperationException("Missing Content-Length header");
+                    }
+                    break;
+                }
+
+                // Process other headers if needed
+            }
+
+            // Read message content
+            char[] buffer = new char[contentLength];
+            int totalRead = 0;
+
+            while (totalRead < contentLength)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int bytesRead = await _reader.ReadAsync(buffer, totalRead, contentLength - totalRead);
+                if (bytesRead == 0)
+                {
+                    throw new InvalidOperationException("Unexpected end of stream while reading message content");
+                }
+                totalRead += bytesRead;
+            }
+
+            string message = new string(buffer);
+            _logger?.LogTrace("Successfully read Content-Length message of {Length} characters", contentLength);
+
+            return message;
         }
 
         /// <inheritdoc />
@@ -158,17 +191,8 @@ namespace Andy.Acp.Core.Transport
 
                 _logger?.LogTrace("Writing message to stdout with {Length} characters", message.Length);
 
-                var messageBytes = Encoding.UTF8.GetBytes(message);
-                var contentLength = messageBytes.Length;
-
-                // Write Content-Length header
-                await _writer.WriteLineAsync($"Content-Length: {contentLength}");
-
-                // Write empty line separator
-                await _writer.WriteLineAsync();
-
-                // Write message content
-                await _writer.WriteAsync(message);
+                // Write line-delimited JSON (simpler format, compatible with Zed/Gemini)
+                await _writer.WriteLineAsync(message);
                 await _writer.FlushAsync();
 
                 _logger?.LogTrace("Successfully wrote message");
