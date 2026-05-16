@@ -157,7 +157,7 @@ andy-acp/
 ## Building and Testing
 
 ### Prerequisites
-- .NET 9.0 SDK or later
+- .NET 8.0 SDK or later
 
 ### Build
 ```bash
