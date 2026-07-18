@@ -90,7 +90,10 @@ namespace Andy.Acp.Tests.JsonRpc
             Assert.NotNull(response);
             Assert.True(response.IsError);
             Assert.Equal(JsonRpcErrorCodes.InternalError, response.Error!.Code);
-            Assert.Contains("Test error", response.Error.Message);
+            // Internal exception details must not leak to the client.
+            Assert.DoesNotContain("Test error", response.Error.Message);
+            Assert.Equal("Internal error", response.Error.Message);
+            Assert.Null(response.Error.Data);
         }
 
         [Fact]

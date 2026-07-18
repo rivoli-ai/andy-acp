@@ -1,42 +1,45 @@
 using System;
-using System.CommandLine;
-using System.Text.Json;
+using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Andy.Acp.Core.Protocol;
+using Andy.Acp.Core.Server;
 using Microsoft.Extensions.Logging;
-using Andy.Acp.Core.Transport;
 
 namespace Andy.Acp.Server
 {
-    class Program
+    /// <summary>
+    /// Entry point for the Andy ACP server executable. It hosts the real
+    /// <see cref="AcpServer"/> stack over stdio with a bundled echo agent so the
+    /// binary is a working, self-contained ACP agent out of the box.
+    /// </summary>
+    internal static class Program
     {
-        static async Task<int> Main(string[] args)
+        private static async Task<int> Main(string[] args)
         {
-            bool acpServerMode = false;
             bool verbose = false;
             string? logFile = null;
 
-            // Parse command line arguments
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
                 {
                     case "--acp-server":
-                        acpServerMode = true;
+                        // Retained for backward compatibility; stdio server mode is the
+                        // only mode this executable runs.
                         break;
                     case "--verbose":
+                    case "-v":
                         verbose = true;
                         break;
                     case "--log-file":
-                        if (i + 1 < args.Length)
-                        {
-                            logFile = args[++i];
-                        }
-                        else
+                        if (i + 1 >= args.Length)
                         {
                             Console.Error.WriteLine("Error: --log-file requires a file path");
                             return 1;
                         }
+                        logFile = args[++i];
                         break;
                     case "--help":
                     case "-h":
@@ -49,133 +52,87 @@ namespace Andy.Acp.Server
                 }
             }
 
-            if (!acpServerMode)
-            {
-                Console.WriteLine("Andy ACP Server");
-                Console.WriteLine("Use --acp-server to start in ACP mode");
-                ShowHelp();
-                return 0;
-            }
-
             try
             {
-                await RunAcpServerAsync(verbose, logFile);
-                return 0;
+                return await RunAsync(verbose, logFile);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Console.Error.WriteLine($"Fatal: {ex.Message}");
                 return 1;
             }
         }
 
-        static void ShowHelp()
+        private static void ShowHelp()
         {
-            Console.WriteLine();
-            Console.WriteLine("Usage: Andy.Acp.Server [options]");
-            Console.WriteLine();
-            Console.WriteLine("Options:");
-            Console.WriteLine("  --acp-server         Start in ACP server mode");
-            Console.WriteLine("  --verbose           Enable verbose logging");
-            Console.WriteLine("  --log-file <path>   Log to file instead of stderr");
-            Console.WriteLine("  --help, -h          Show this help message");
-            Console.WriteLine();
-            Console.WriteLine("Examples:");
-            Console.WriteLine("  Andy.Acp.Server --acp-server");
-            Console.WriteLine("  Andy.Acp.Server --acp-server --verbose");
-            Console.WriteLine("  Andy.Acp.Server --acp-server --log-file /path/to/log.txt");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Andy ACP Server - an Agent Client Protocol agent over stdio");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Usage: Andy.Acp.Server [options]");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Options:");
+            Console.Error.WriteLine("  --acp-server        Run as an ACP stdio server (default behavior)");
+            Console.Error.WriteLine("  --verbose, -v       Enable debug-level logging");
+            Console.Error.WriteLine("  --log-file <path>   Write diagnostics to a file instead of stderr");
+            Console.Error.WriteLine("  --help, -h          Show this help message");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Diagnostics are written to stderr (or --log-file); stdout carries only");
+            Console.Error.WriteLine("the JSON-RPC/ACP protocol stream.");
         }
 
-        static async Task RunAcpServerAsync(bool verbose, string? logFile)
+        private static async Task<int> RunAsync(bool verbose, string? logFile)
         {
-            // Set up logging
-            using var loggerFactory = LoggerFactory.Create(builder =>
-            {
-                if (verbose)
-                {
-                    builder.SetMinimumLevel(LogLevel.Debug);
-                }
-                else
-                {
-                    builder.SetMinimumLevel(LogLevel.Information);
-                }
-
-                // In ACP mode, console logging goes to stderr
-                builder.AddSimpleConsole(options =>
-                {
-                    options.SingleLine = true;
-                    options.TimestampFormat = "HH:mm:ss ";
-                });
-            });
-
-            var logger = loggerFactory.CreateLogger<Program>();
-            var transportLogger = loggerFactory.CreateLogger<StdioTransport>();
-
-            // Redirect console output to stderr when in ACP mode
-            Console.SetOut(Console.Error);
-
-            using var transport = new StdioTransport(transportLogger);
-
-            logger.LogInformation("Andy ACP Server starting...");
-            logger.LogInformation("Listening for ACP messages on stdin");
-
-            var cancellationTokenSource = new CancellationTokenSource();
-
-            // Handle Ctrl+C gracefully
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                e.Cancel = true;
-                logger.LogInformation("Shutdown requested...");
-                cancellationTokenSource.Cancel();
-            };
-
+            StreamWriter? fileWriter = null;
             try
             {
-                while (!cancellationTokenSource.Token.IsCancellationRequested && transport.IsConnected)
+                using var loggerFactory = LoggerFactory.Create(builder =>
                 {
-                    try
+                    builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+
+                    // Diagnostics must never touch stdout, which is the protocol channel.
+                    if (logFile != null)
                     {
-                        logger.LogDebug("Waiting for incoming message...");
-
-                        var message = await transport.ReadMessageAsync(cancellationTokenSource.Token);
-
-                        logger.LogInformation("Received message: {MessageLength} characters", message.Length);
-                        logger.LogDebug("Message content: {Message}", message);
-
-                        // Echo the message back for now (placeholder for actual ACP message handling)
-                        var response = $"{{\"id\":null,\"result\":{{\"echo\":\"{message}\"}},\"jsonrpc\":\"2.0\"}}";
-
-                        await transport.WriteMessageAsync(response, cancellationTokenSource.Token);
-
-                        logger.LogDebug("Response sent");
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Error processing message");
-
-                        // Send error response
-                        var errorResponse = $"{{\"id\":null,\"error\":{{\"code\":-32603,\"message\":\"Internal error: {ex.Message}\"}},\"jsonrpc\":\"2.0\"}}";
-
-                        try
+                        fileWriter = new StreamWriter(
+                            new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
                         {
-                            await transport.WriteMessageAsync(errorResponse, cancellationTokenSource.Token);
-                        }
-                        catch (Exception writeEx)
-                        {
-                            logger.LogError(writeEx, "Failed to send error response");
-                        }
+                            AutoFlush = true
+                        };
+                        builder.AddProvider(new TextWriterLoggerProvider(fileWriter));
                     }
-                }
+                    else
+                    {
+                        builder.AddProvider(new TextWriterLoggerProvider(Console.Error));
+                    }
+                });
+
+                // Redirect any stray Console.Out writes to stderr so they cannot corrupt
+                // the protocol stream (the transport uses the raw stdout handle directly).
+                Console.SetOut(Console.Error);
+
+                var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
+                var serverInfo = new ServerInfo
+                {
+                    Name = "Andy ACP Server",
+                    Version = version,
+                    Description = "Andy Agent Client Protocol server (bundled echo agent)"
+                };
+
+                var agent = new BundledEchoAgentProvider();
+                var server = new AcpServer(agent, serverInfo: serverInfo, loggerFactory: loggerFactory);
+
+                using var cts = new CancellationTokenSource();
+                Console.CancelKeyPress += (_, e) =>
+                {
+                    e.Cancel = true;
+                    cts.Cancel();
+                };
+
+                await server.RunAsync(cts.Token);
+                return 0;
             }
             finally
             {
-                logger.LogInformation("Closing transport...");
-                await transport.CloseAsync();
-                logger.LogInformation("Andy ACP Server stopped");
+                fileWriter?.Dispose();
             }
         }
     }

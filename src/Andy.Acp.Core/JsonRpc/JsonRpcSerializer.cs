@@ -63,6 +63,15 @@ namespace Andy.Acp.Core.JsonRpc
                 using var document = JsonDocument.Parse(json);
                 var root = document.RootElement;
 
+                // JSON-RPC batch requests (a top-level array) are not supported by this
+                // implementation. Reject them explicitly and consistently rather than
+                // failing with an opaque parse error.
+                if (root.ValueKind == JsonValueKind.Array)
+                    throw new JsonRpcInvalidRequestException("JSON-RPC batch requests are not supported");
+
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw new JsonRpcInvalidRequestException("A JSON-RPC message must be a JSON object");
+
                 // Validate jsonrpc version
                 if (root.TryGetProperty("jsonrpc", out var jsonRpcElement))
                 {
@@ -112,6 +121,23 @@ namespace Andy.Acp.Core.JsonRpc
                     // Method names starting with "rpc." are reserved
                     if (request.Method.StartsWith("rpc.", StringComparison.OrdinalIgnoreCase))
                         throw new JsonRpcInvalidRequestException("Method names starting with 'rpc.' are reserved");
+
+                    // Distinguish an omitted id (notification) from an explicit id (including
+                    // an explicit null), which the JsonRpcRequest model cannot otherwise tell apart.
+                    request.HasId = hasId;
+                    if (hasId && root.TryGetProperty("id", out var idElement) &&
+                        idElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                            or JsonValueKind.True or JsonValueKind.False)
+                    {
+                        throw new JsonRpcInvalidRequestException("'id' must be a string, number, or null");
+                    }
+
+                    // Per JSON-RPC 2.0, 'params' (when present) must be a structured value.
+                    if (root.TryGetProperty("params", out var paramsElement) &&
+                        paramsElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Null))
+                    {
+                        throw new JsonRpcInvalidRequestException("'params' must be an object or array");
+                    }
 
                     return request;
                 }

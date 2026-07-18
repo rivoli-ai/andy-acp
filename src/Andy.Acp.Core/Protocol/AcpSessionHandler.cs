@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -21,6 +22,11 @@ namespace Andy.Acp.Core.Protocol
         private readonly ILogger<AcpSessionHandler>? _logger;
         private readonly JsonRpcHandler _jsonRpcHandler;
         private ITransport? _transport;
+
+        // Tracks the in-flight prompt operation per session so that session/cancel
+        // can interrupt exactly the prompt it targets. At most one prompt per session
+        // is allowed to run concurrently.
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _activePrompts = new();
 
         public AcpSessionHandler(
             IAgentProvider agentProvider,
@@ -162,33 +168,56 @@ namespace Andy.Acp.Core.Protocol
                     promptParams.SessionId,
                     promptMessage.Text.Substring(0, Math.Min(50, promptMessage.Text.Length)));
 
-                // Create a response streamer that sends session/update notifications
-                var streamer = new SessionUpdateStreamer(_transport, promptParams.SessionId, _logger);
-
-                // Process the prompt through the agent
-                var response = await _agentProvider.ProcessPromptAsync(
-                    promptParams.SessionId,
-                    promptMessage,
-                    streamer,
-                    cancellationToken);
-
-                _logger?.LogInformation("Prompt processing completed for session {SessionId}, stop reason: {StopReason}",
-                    promptParams.SessionId, response.StopReason);
-
-                // Return only stopReason (ACP protocol expects only this field)
-                // The actual message content was already sent via session/update notifications
-                return new
+                // Link a per-prompt cancellation source to the connection token so that a
+                // session/cancel targeting this session cancels exactly this prompt.
+                var promptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                if (!_activePrompts.TryAdd(promptParams.SessionId, promptCts))
                 {
-                    stopReason = MapStopReason(response.StopReason)
-                };
+                    promptCts.Dispose();
+                    throw new JsonRpcProtocolException(
+                        JsonRpcErrorCodes.InvalidRequest,
+                        $"A prompt is already in progress for session {promptParams.SessionId}");
+                }
+
+                try
+                {
+                    // Create a response streamer that sends session/update notifications
+                    var streamer = new SessionUpdateStreamer(_transport, promptParams.SessionId, _logger);
+
+                    // Process the prompt through the agent using the linked token.
+                    var response = await _agentProvider.ProcessPromptAsync(
+                        promptParams.SessionId,
+                        promptMessage,
+                        streamer,
+                        promptCts.Token);
+
+                    _logger?.LogInformation("Prompt processing completed for session {SessionId}, stop reason: {StopReason}",
+                        promptParams.SessionId, response.StopReason);
+
+                    // Return only stopReason. The message content was already streamed via
+                    // session/update notifications, which are written before this response.
+                    return new
+                    {
+                        stopReason = MapStopReason(response.StopReason)
+                    };
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger?.LogInformation("Prompt processing was cancelled for session {SessionId}", promptParams.SessionId);
+                    return new
+                    {
+                        stopReason = "cancelled"
+                    };
+                }
+                finally
+                {
+                    _activePrompts.TryRemove(promptParams.SessionId, out _);
+                    promptCts.Dispose();
+                }
             }
-            catch (OperationCanceledException)
+            catch (JsonRpcProtocolException)
             {
-                _logger?.LogInformation("Prompt processing was cancelled");
-                return new
-                {
-                    stopReason = "cancelled"
-                };
+                throw;
             }
             catch (Exception ex)
             {
@@ -277,7 +306,7 @@ namespace Andy.Acp.Core.Protocol
 
         private async Task<object?> HandleCancelAsync(object? parameters, CancellationToken cancellationToken)
         {
-            _logger?.LogDebug("Handling session/cancel request");
+            _logger?.LogDebug("Handling session/cancel notification");
 
             try
             {
@@ -290,15 +319,23 @@ namespace Andy.Acp.Core.Protocol
                         "Session ID is required");
                 }
 
+                // Cancel the in-flight prompt for this session, if any. Duplicate or late
+                // cancellations are harmless: there is simply no active prompt to cancel.
+                if (_activePrompts.TryGetValue(cancelParams.SessionId, out var promptCts))
+                {
+                    _logger?.LogInformation("Cancelling in-flight prompt for session {SessionId}", cancelParams.SessionId);
+                    try { promptCts.Cancel(); } catch (ObjectDisposedException) { }
+                }
+
+                // Also notify the agent so it can stop any session-scoped background work.
                 await _agentProvider.CancelSessionAsync(cancelParams.SessionId, cancellationToken);
 
-                _logger?.LogInformation("Cancelled session {SessionId}", cancelParams.SessionId);
-
-                return new { success = true };
+                // session/cancel is a notification; the server sends no response for it.
+                return null;
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error cancelling session");
+                _logger?.LogError(ex, "Error handling session/cancel");
                 throw;
             }
         }
