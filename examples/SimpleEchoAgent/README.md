@@ -43,22 +43,23 @@ The agent will start and wait for ACP protocol messages on stdin.
    dotnet build examples/SimpleEchoAgent -c Release
    ```
 
-2. Configure Zed by editing `~/.config/zed/settings.json`:
+2. Configure Zed by editing `~/.config/zed/settings.json` using the current
+   `agent_servers` custom-agent syntax:
    ```json
    {
-     "agent": {
-       "provider": {
-         "name": "custom",
+     "agent_servers": {
+       "Andy Echo": {
          "command": "/path/to/andy-acp/examples/SimpleEchoAgent/bin/Release/net8.0/SimpleEchoAgent",
-         "args": ["--acp"]
+         "args": ["--acp"],
+         "env": {}
        }
      }
    }
    ```
 
-3. Restart Zed or reload the assistant panel
+3. Restart Zed.
 
-4. Open the Assistant panel and try sending a message. You should see your message echoed back!
+4. Open the Agent Panel, select **Andy Echo**, and send a message. You should see it echoed back.
 
 ## Code Structure
 
