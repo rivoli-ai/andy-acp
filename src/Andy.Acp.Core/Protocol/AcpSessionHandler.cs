@@ -26,6 +26,7 @@ namespace Andy.Acp.Core.Protocol
         private readonly JsonRpcHandler _jsonRpcHandler;
         private readonly AcpConnectionState _state;
         private ITransport? _transport;
+        private Andy.Acp.Core.Client.IAcpClient? _client;
 
         // Tracks the in-flight prompt operation per session so that session/cancel can
         // interrupt exactly the prompt it targets. At most one prompt per session runs at a time.
@@ -47,6 +48,12 @@ namespace Andy.Acp.Core.Protocol
         public void SetTransport(ITransport transport)
         {
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        }
+
+        /// <summary>Sets the client handle used for agent → client requests during prompts/loads.</summary>
+        public void SetClient(Andy.Acp.Core.Client.IAcpClient client)
+        {
+            _client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
         /// <summary>Registers all ACP session methods with the JSON-RPC handler.</summary>
@@ -126,7 +133,7 @@ namespace Andy.Acp.Core.Protocol
             };
 
             // The provider replays conversation history through this streamer before returning.
-            var streamer = new SessionUpdateStreamer(_transport, req.SessionId, _logger);
+            var streamer = new SessionUpdateStreamer(_transport, req.SessionId, _logger, _client);
 
             var metadata = await _agentProvider.LoadSessionAsync(loadParams, streamer, cancellationToken);
             if (metadata == null)
@@ -175,7 +182,7 @@ namespace Andy.Acp.Core.Protocol
 
                 try
                 {
-                    var streamer = new SessionUpdateStreamer(_transport, promptParams.SessionId, _logger);
+                    var streamer = new SessionUpdateStreamer(_transport, promptParams.SessionId, _logger, _client);
 
                     var response = await _agentProvider.ProcessPromptAsync(
                         promptParams.SessionId, promptMessage, streamer, promptCts.Token);

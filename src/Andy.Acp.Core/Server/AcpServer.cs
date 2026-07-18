@@ -5,11 +5,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Andy.Acp.Core.Agent;
-using Andy.Acp.Core.FileSystem;
+using Andy.Acp.Core.Client;
 using Andy.Acp.Core.JsonRpc;
 using Andy.Acp.Core.Protocol;
 using Andy.Acp.Core.Session;
-using Andy.Acp.Core.Terminal;
 using Andy.Acp.Core.Transport;
 using Microsoft.Extensions.Logging;
 
@@ -22,30 +21,24 @@ namespace Andy.Acp.Core.Server
     public class AcpServer
     {
         private readonly IAgentProvider _agentProvider;
-        private readonly IFileSystemProvider? _fileSystemProvider;
-        private readonly ITerminalProvider? _terminalProvider;
         private readonly ServerInfo _serverInfo;
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<AcpServer>? _logger;
 
         /// <summary>
-        /// Create a new ACP server with the specified providers.
+        /// Create a new ACP server for the given agent. Filesystem and terminal operations
+        /// are performed as agent → client requests via <see cref="Client.IAcpClient"/>
+        /// (exposed to the agent through the response streamer), not as inbound server methods.
         /// </summary>
         /// <param name="agentProvider">Required: The agent that handles prompts and reasoning</param>
-        /// <param name="fileSystemProvider">Optional: Provider for file operations (fs/*)</param>
-        /// <param name="terminalProvider">Optional: Provider for terminal operations (terminal/*)</param>
         /// <param name="serverInfo">Optional: Server identification information</param>
         /// <param name="loggerFactory">Optional: Logger factory for diagnostics</param>
         public AcpServer(
             IAgentProvider agentProvider,
-            IFileSystemProvider? fileSystemProvider = null,
-            ITerminalProvider? terminalProvider = null,
             ServerInfo? serverInfo = null,
             ILoggerFactory? loggerFactory = null)
         {
             _agentProvider = agentProvider ?? throw new ArgumentNullException(nameof(agentProvider));
-            _fileSystemProvider = fileSystemProvider;
-            _terminalProvider = terminalProvider;
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<AcpServer>();
 
@@ -121,6 +114,10 @@ namespace Andy.Acp.Core.Server
                     _loggerFactory?.CreateLogger<AcpProtocolHandler>());
                 protocolHandler.RegisterMethods(jsonRpcHandler);
 
+                // Agent → client request channel (fs/*, terminal/*, session/request_permission).
+                // Client responses are routed back to this proxy by the read loop below.
+                var acpClient = new AcpClient(transport, connectionState, _loggerFactory?.CreateLogger<AcpClient>());
+
                 // Register the session handler (session/new, load, prompt, set_mode, cancel).
                 var sessionHandler = new AcpSessionHandler(
                     _agentProvider,
@@ -128,27 +125,11 @@ namespace Andy.Acp.Core.Server
                     connectionState,
                     _loggerFactory?.CreateLogger<AcpSessionHandler>());
                 sessionHandler.SetTransport(transport);  // Enable sending session/update notifications
+                sessionHandler.SetClient(acpClient);     // Enable agent-to-client requests
                 sessionHandler.RegisterMethods();
 
-                // Register file system handler if provider is available
-                if (_fileSystemProvider != null)
-                {
-                    var fileSystemHandler = new AcpFileSystemHandler(
-                        _fileSystemProvider,
-                        jsonRpcHandler,
-                        _loggerFactory?.CreateLogger<AcpFileSystemHandler>());
-                    fileSystemHandler.RegisterMethods();
-                }
-
-                // Register terminal handler if provider is available
-                if (_terminalProvider != null)
-                {
-                    var terminalHandler = new AcpTerminalHandler(
-                        _terminalProvider,
-                        jsonRpcHandler,
-                        _loggerFactory?.CreateLogger<AcpTerminalHandler>());
-                    terminalHandler.RegisterMethods();
-                }
+                // Filesystem and terminal are agent → client requests, so no inbound fs/*
+                // or terminal/* handlers are registered here.
 
                 // Start session manager
                 await sessionManager.StartAsync();
@@ -201,7 +182,7 @@ namespace Andy.Acp.Core.Server
                         // Dispatch handling without blocking the read loop. Failures are
                         // observed in the continuation and never terminate the loop silently.
                         var handlerTask = Task.Run(
-                            () => DispatchMessageAsync(messageJson, jsonRpcHandler, transport, cancellationToken),
+                            () => DispatchMessageAsync(messageJson, jsonRpcHandler, transport, acpClient, cancellationToken),
                             CancellationToken.None);
 
                         inFlight.TryAdd(handlerTask, 0);
@@ -228,6 +209,10 @@ namespace Andy.Acp.Core.Server
                         _logger?.LogWarning(ex, "Timed out or errored waiting for in-flight handlers during shutdown");
                     }
 
+                    // Fail any still-pending agent-to-client requests now that the
+                    // connection is closing, so awaiting agent operations complete.
+                    acpClient.FailAllPending(new AcpClientDisconnectedException("The ACP connection was closed"));
+
                     await sessionManager.StopAsync(CancellationToken.None);
                     await transport.CloseAsync(CancellationToken.None);
                 }
@@ -251,6 +236,7 @@ namespace Andy.Acp.Core.Server
             string messageJson,
             JsonRpcHandler jsonRpcHandler,
             ITransport transport,
+            AcpClient acpClient,
             CancellationToken cancellationToken)
         {
             JsonRpcResponse? response = null;
@@ -268,9 +254,9 @@ namespace Andy.Acp.Core.Server
                 }
                 else if (jsonRpcMessage is JsonRpcResponse responseMessage)
                 {
-                    // Inbound responses correspond to agent-to-client requests. Routing them
-                    // to pending outbound operations is handled by the bidirectional layer.
-                    _logger?.LogDebug("Received response (ID: {Id}) with no pending outbound request", responseMessage.Id);
+                    // Inbound responses correspond to agent-to-client requests; route them to
+                    // the awaiting outbound operation.
+                    acpClient.HandleResponse(responseMessage);
                 }
             }
             catch (JsonRpcException ex)
