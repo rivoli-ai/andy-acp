@@ -154,19 +154,16 @@ namespace Andy.Acp.Core.Protocol
                         "Prompt content is required");
                 }
 
-                // Convert content blocks to PromptMessage
+                // Validate content types against the agent's negotiated capabilities.
+                // text and resource_link are baseline-supported; image/audio/embedded
+                // resource are gated on capabilities. Non-text prompts are permitted.
+                ValidateContentBlocks(promptParams.PromptBlocks);
+
+                // Convert content blocks to PromptMessage without losing non-text content.
                 var promptMessage = promptParams.ToPromptMessage();
 
-                if (string.IsNullOrEmpty(promptMessage.Text))
-                {
-                    throw new JsonRpcProtocolException(
-                        JsonRpcErrorCodes.InvalidParams,
-                        "Prompt text is required");
-                }
-
-                _logger?.LogInformation("Processing prompt for session {SessionId}: {PromptPreview}",
-                    promptParams.SessionId,
-                    promptMessage.Text.Substring(0, Math.Min(50, promptMessage.Text.Length)));
+                _logger?.LogInformation("Processing prompt for session {SessionId}: {BlockCount} block(s)",
+                    promptParams.SessionId, promptParams.PromptBlocks.Count);
 
                 // Link a per-prompt cancellation source to the connection token so that a
                 // session/cancel targeting this session cancels exactly this prompt.
@@ -345,13 +342,15 @@ namespace Andy.Acp.Core.Protocol
             if (parameters == null)
                 return null;
 
+            // Use the shared JSON-RPC options (camelCase, case-insensitive) so ACP wire
+            // field names bind correctly across every parameter type.
             if (parameters is JsonElement jsonElement)
             {
-                return JsonSerializer.Deserialize<T>(jsonElement.GetRawText());
+                return JsonSerializer.Deserialize<T>(jsonElement.GetRawText(), JsonRpcSerializer.Options);
             }
 
-            var json = JsonSerializer.Serialize(parameters);
-            return JsonSerializer.Deserialize<T>(json);
+            var json = JsonSerializer.Serialize(parameters, JsonRpcSerializer.Options);
+            return JsonSerializer.Deserialize<T>(json, JsonRpcSerializer.Options);
         }
 
         /// <summary>
@@ -377,6 +376,46 @@ namespace Andy.Acp.Core.Protocol
             public string SessionId { get; set; } = string.Empty;
         }
 
+        /// <summary>
+        /// Validates every prompt content block against the agent's negotiated
+        /// capabilities. text and resource_link are always accepted; image, audio, and
+        /// embedded resource content require the corresponding capability. Unsupported or
+        /// unknown content produces an InvalidParams error.
+        /// </summary>
+        private void ValidateContentBlocks(List<ContentBlock> blocks)
+        {
+            var caps = _agentProvider.GetCapabilities();
+
+            foreach (var block in blocks)
+            {
+                switch (block.Type)
+                {
+                    case "text":
+                    case "resource_link":
+                        // Baseline-supported regardless of capabilities.
+                        break;
+                    case "image":
+                        if (!caps.ImagePrompts)
+                            throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                                "Image content is not supported by this agent");
+                        break;
+                    case "audio":
+                        if (!caps.AudioPrompts)
+                            throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                                "Audio content is not supported by this agent");
+                        break;
+                    case "resource":
+                        if (!caps.EmbeddedContext)
+                            throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                                "Embedded resource content is not supported by this agent");
+                        break;
+                    default:
+                        throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                            $"Unsupported content block type: {block.Type}");
+                }
+            }
+        }
+
         private class PromptRequest
         {
             [JsonPropertyName("sessionId")]
@@ -385,7 +424,11 @@ namespace Andy.Acp.Core.Protocol
             [JsonPropertyName("prompt")]
             public List<ContentBlock>? PromptBlocks { get; set; }
 
-            // Helper to convert to PromptMessage
+            /// <summary>
+            /// Converts the request to a <see cref="PromptMessage"/> without discarding
+            /// non-text content: all blocks are preserved in order, and the text blocks
+            /// are additionally joined into <see cref="PromptMessage.Text"/>.
+            /// </summary>
             public PromptMessage ToPromptMessage()
             {
                 var message = new PromptMessage();
@@ -393,30 +436,15 @@ namespace Andy.Acp.Core.Protocol
                 if (PromptBlocks == null || PromptBlocks.Count == 0)
                     return message;
 
-                // Combine all text blocks
+                message.Blocks = PromptBlocks;
+
                 var textParts = PromptBlocks
                     .Where(b => b.Type == "text" && !string.IsNullOrEmpty(b.Text))
                     .Select(b => b.Text!);
-
                 message.Text = string.Join("\n", textParts);
 
                 return message;
             }
-        }
-
-        private class ContentBlock
-        {
-            [JsonPropertyName("type")]
-            public string Type { get; set; } = string.Empty;
-
-            [JsonPropertyName("text")]
-            public string? Text { get; set; }
-
-            [JsonPropertyName("data")]
-            public string? Data { get; set; }
-
-            [JsonPropertyName("mimeType")]
-            public string? MimeType { get; set; }
         }
 
         private class SetModeRequest

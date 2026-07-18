@@ -4,34 +4,95 @@ using System.Collections.Generic;
 namespace Andy.Acp.Core.Agent
 {
     /// <summary>
-    /// A message from the user to the agent
+    /// A message from the user to the agent. The canonical representation is
+    /// <see cref="Blocks"/>, which preserves every ACP content block (text, image,
+    /// audio, resource, resource_link) in order. <see cref="Text"/> is a convenience
+    /// join of the text blocks and may be empty for a valid non-text prompt.
     /// </summary>
     public class PromptMessage
     {
         /// <summary>
-        /// The text content of the message
+        /// The ordered ACP content blocks that make up this prompt. This is the
+        /// lossless representation: image/audio/resource/resource_link payloads are
+        /// preserved here even when they have no text.
+        /// </summary>
+        public List<ContentBlock> Blocks { get; set; } = new();
+
+        /// <summary>
+        /// Convenience concatenation of the text blocks (newline-joined). May be empty
+        /// when the prompt contains only non-text content.
         /// </summary>
         public string Text { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Optional image attachments (URLs or base64)
-        /// </summary>
-        public List<ImageAttachment>? Images { get; set; }
-
-        /// <summary>
-        /// Optional audio attachments
-        /// </summary>
-        public List<AudioAttachment>? Audio { get; set; }
-
-        /// <summary>
-        /// Optional embedded context (file contents, etc.)
-        /// </summary>
-        public List<ContextItem>? Context { get; set; }
 
         /// <summary>
         /// Additional metadata
         /// </summary>
         public Dictionary<string, object>? Metadata { get; set; }
+    }
+
+    /// <summary>
+    /// An ACP content block. A single flexible shape covers every variant; the
+    /// populated fields depend on <see cref="Type"/>:
+    /// <list type="bullet">
+    /// <item><c>text</c>: <see cref="Text"/></item>
+    /// <item><c>image</c>/<c>audio</c>: <see cref="Data"/> (base64) + <see cref="MimeType"/></item>
+    /// <item><c>resource_link</c>: <see cref="Uri"/> + <see cref="Name"/> (+ optional metadata)</item>
+    /// <item><c>resource</c>: <see cref="Resource"/> (embedded text or blob)</item>
+    /// </list>
+    /// </summary>
+    public class ContentBlock
+    {
+        /// <summary>Discriminator: text, image, audio, resource_link, or resource.</summary>
+        public string Type { get; set; } = "text";
+
+        /// <summary>Text payload (type = text).</summary>
+        public string? Text { get; set; }
+
+        /// <summary>Base64-encoded payload (type = image or audio).</summary>
+        public string? Data { get; set; }
+
+        /// <summary>MIME type (image/audio/resource_link).</summary>
+        public string? MimeType { get; set; }
+
+        /// <summary>URI (resource_link, or optional source uri for image).</summary>
+        public string? Uri { get; set; }
+
+        /// <summary>Human-readable name (resource_link).</summary>
+        public string? Name { get; set; }
+
+        /// <summary>Optional description (resource_link).</summary>
+        public string? Description { get; set; }
+
+        /// <summary>Optional title (resource_link).</summary>
+        public string? Title { get; set; }
+
+        /// <summary>Optional size in bytes (resource_link).</summary>
+        public long? Size { get; set; }
+
+        /// <summary>Embedded resource contents (type = resource).</summary>
+        public EmbeddedResource? Resource { get; set; }
+
+        /// <summary>Optional ACP annotations, preserved as raw JSON.</summary>
+        public object? Annotations { get; set; }
+    }
+
+    /// <summary>
+    /// Embedded resource contents for a <c>resource</c> content block: either text
+    /// (<see cref="Text"/>) or binary (<see cref="Blob"/>, base64).
+    /// </summary>
+    public class EmbeddedResource
+    {
+        /// <summary>Resource URI.</summary>
+        public string? Uri { get; set; }
+
+        /// <summary>MIME type of the resource.</summary>
+        public string? MimeType { get; set; }
+
+        /// <summary>Text contents (TextResourceContents).</summary>
+        public string? Text { get; set; }
+
+        /// <summary>Base64 binary contents (BlobResourceContents).</summary>
+        public string? Blob { get; set; }
     }
 
     /// <summary>
