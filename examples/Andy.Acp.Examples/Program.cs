@@ -448,7 +448,7 @@ namespace Andy.Acp.Examples
             logger.LogInformation("Created tool provider with {Count} tools: {Tools}",
                 toolNames.Length, string.Join(", ", toolNames));
 
-            // Register ACP protocol methods (initialize, initialized, shutdown)
+            // Register the ACP initialize handshake.
             var serverInfo = new ServerInfo
             {
                 Name = "Andy.Acp.Examples",
@@ -456,39 +456,24 @@ namespace Andy.Acp.Examples
                 Description = "Example ACP server demonstrating protocol implementation with tools"
             };
 
-            var serverCapabilities = new ServerCapabilities
+            var agentCapabilities = new AcpAgentCapabilities
             {
-                Tools = new ToolsCapability
-                {
-                    Supported = true,
-                    Available = toolNames,
-                    ListSupported = true,
-                    ExecutionSupported = true
-                },
-                Resources = new ResourcesCapability
-                {
-                    Supported = true,
-                    SupportedSchemes = new[] { "file://" }
-                },
-                Prompts = new PromptsCapability
-                {
-                    Supported = false
-                },
-                Logging = new LoggingCapability
-                {
-                    Supported = true,
-                    SupportedLevels = new[] { "debug", "info", "warning", "error" }
-                }
+                LoadSession = false,
+                PromptCapabilities = new AcpPromptCapabilities(),
+                McpCapabilities = new AcpMcpCapabilities()
             };
 
-            var protocolHandler = new AcpProtocolHandler(sessionManager, serverInfo, serverCapabilities, logger as ILogger<AcpProtocolHandler>);
+            var connectionState = new AcpConnectionState();
+
+            var protocolHandler = new AcpProtocolHandler(connectionState, serverInfo, agentCapabilities, logger as ILogger<AcpProtocolHandler>);
             protocolHandler.RegisterMethods(handler);
 
-            // Register tools handler
-            var toolsHandler = new AcpToolsHandler(toolProvider, logger as ILogger<AcpToolsHandler>);
+            // Register the MCP-compatibility tools handler (tools/list, tools/call). These are
+            // distinct from ACP session tool-call updates.
+            var toolsHandler = new AcpToolsHandler(toolProvider, connectionState, logger as ILogger<AcpToolsHandler>);
             toolsHandler.RegisterMethods(handler);
 
-            logger.LogInformation("Registered ACP protocol methods: initialize, initialized, shutdown, tools/list, tools/call");
+            logger.LogInformation("Registered ACP method: initialize, plus MCP-compat tools/list, tools/call");
             logger.LogInformation("Available tools: {Tools}", string.Join(", ", toolNames));
         }
     }

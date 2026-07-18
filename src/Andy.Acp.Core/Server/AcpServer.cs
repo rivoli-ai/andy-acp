@@ -95,66 +95,37 @@ namespace Andy.Acp.Core.Server
                 // Create session manager
                 var sessionManager = new SessionManager(_loggerFactory?.CreateLogger<SessionManager>());
 
-                // Get agent capabilities
+                // Get agent capabilities and advertise them in the ACP shape.
                 var agentCapabilities = _agentProvider.GetCapabilities();
-
-                // Build server capabilities based on available providers
-                var serverCapabilities = new ServerCapabilities
+                var acpAgentCapabilities = new AcpAgentCapabilities
                 {
-                    // Agent capabilities
                     LoadSession = agentCapabilities.LoadSession,
-                    AudioPrompts = agentCapabilities.AudioPrompts,
-                    ImagePrompts = agentCapabilities.ImagePrompts,
-                    EmbeddedContext = agentCapabilities.EmbeddedContext,
-
-                    // File system capabilities
-                    FileSystemSupported = _fileSystemProvider != null,
-
-                    // Terminal capabilities
-                    TerminalSupported = _terminalProvider != null,
-
-                    // Tools (MCP compatibility)
-                    Tools = new ToolsCapability
+                    PromptCapabilities = new AcpPromptCapabilities
                     {
-                        Supported = false, // We're using session/prompt, not tools/call
-                        Available = Array.Empty<string>(),
-                        ListSupported = false,
-                        ExecutionSupported = false
+                        Image = agentCapabilities.ImagePrompts,
+                        Audio = agentCapabilities.AudioPrompts,
+                        EmbeddedContext = agentCapabilities.EmbeddedContext
                     },
-
-                    // Resources
-                    Resources = new ResourcesCapability
-                    {
-                        Supported = _fileSystemProvider != null,
-                        SupportedSchemes = _fileSystemProvider != null ? new[] { "file://" } : Array.Empty<string>()
-                    },
-
-                    // Prompts
-                    Prompts = new PromptsCapability
-                    {
-                        Supported = true // We support session/prompt
-                    },
-
-                    // Logging
-                    Logging = new LoggingCapability
-                    {
-                        Supported = true,
-                        SupportedLevels = new[] { "debug", "info", "warning", "error" }
-                    }
+                    McpCapabilities = new AcpMcpCapabilities { Http = false, Sse = false }
                 };
 
-                // Register protocol handlers
+                // Shared connection state enforces initialize-before-session ordering and
+                // carries the negotiated client capabilities.
+                var connectionState = new AcpConnectionState();
+
+                // Register the initialize handshake handler.
                 var protocolHandler = new AcpProtocolHandler(
-                    sessionManager,
+                    connectionState,
                     _serverInfo,
-                    serverCapabilities,
+                    acpAgentCapabilities,
                     _loggerFactory?.CreateLogger<AcpProtocolHandler>());
                 protocolHandler.RegisterMethods(jsonRpcHandler);
 
-                // Register session handler (the most important one)
+                // Register the session handler (session/new, load, prompt, set_mode, cancel).
                 var sessionHandler = new AcpSessionHandler(
                     _agentProvider,
                     jsonRpcHandler,
+                    connectionState,
                     _loggerFactory?.CreateLogger<AcpSessionHandler>());
                 sessionHandler.SetTransport(transport);  // Enable sending session/update notifications
                 sessionHandler.RegisterMethods();

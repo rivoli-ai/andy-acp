@@ -1,135 +1,10 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
-using Andy.Acp.Core.Session;
 
 namespace Andy.Acp.Core.Protocol
 {
     /// <summary>
-    /// Represents the parameters for the initialize request
-    /// </summary>
-    public class InitializeParams
-    {
-        /// <summary>
-        /// The protocol version supported by the client
-        /// </summary>
-        [JsonPropertyName("protocolVersion")]
-        public int? ProtocolVersion { get; set; }
-
-        /// <summary>
-        /// Capabilities provided by the client
-        /// </summary>
-        [JsonPropertyName("clientCapabilities")]
-        public ClientCapabilities? Capabilities { get; set; }
-
-        /// <summary>
-        /// Information about the client
-        /// </summary>
-        [JsonPropertyName("clientInfo")]
-        public ClientInfo? ClientInfo { get; set; }
-    }
-
-    /// <summary>
-    /// Represents the result of the initialize request (ACP protocol)
-    /// </summary>
-    public class InitializeResult
-    {
-        /// <summary>
-        /// The protocol version supported by the agent
-        /// </summary>
-        public required int ProtocolVersion { get; set; }
-
-        /// <summary>
-        /// Information about the agent
-        /// </summary>
-        public AgentInfo? AgentInfo { get; set; }
-
-        /// <summary>
-        /// Capabilities provided by the agent
-        /// </summary>
-        public AgentCapabilitiesResponse? AgentCapabilities { get; set; }
-
-        /// <summary>
-        /// Authentication methods supported by the agent
-        /// </summary>
-        public List<string>? AuthMethods { get; set; }
-    }
-
-    /// <summary>
-    /// Information about the agent
-    /// </summary>
-    public class AgentInfo
-    {
-        /// <summary>
-        /// Name of the agent
-        /// </summary>
-        public required string Name { get; set; }
-
-        /// <summary>
-        /// Version of the agent
-        /// </summary>
-        public required string Version { get; set; }
-    }
-
-    /// <summary>
-    /// Agent capabilities in the initialize response
-    /// </summary>
-    public class AgentCapabilitiesResponse
-    {
-        /// <summary>
-        /// Whether the agent supports loading existing sessions
-        /// </summary>
-        public bool LoadSession { get; set; }
-
-        /// <summary>
-        /// Prompt-related capabilities
-        /// </summary>
-        public PromptCapabilitiesResponse? PromptCapabilities { get; set; }
-
-        /// <summary>
-        /// MCP-related capabilities (if the agent supports MCP)
-        /// </summary>
-        public McpCapabilitiesResponse? McpCapabilities { get; set; }
-    }
-
-    /// <summary>
-    /// Prompt capabilities
-    /// </summary>
-    public class PromptCapabilitiesResponse
-    {
-        /// <summary>
-        /// Whether the agent supports audio in prompts
-        /// </summary>
-        public bool Audio { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports images in prompts
-        /// </summary>
-        public bool Image { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports embedded context in prompts
-        /// </summary>
-        public bool EmbeddedContext { get; set; }
-    }
-
-    /// <summary>
-    /// MCP capabilities
-    /// </summary>
-    public class McpCapabilitiesResponse
-    {
-        /// <summary>
-        /// Whether MCP HTTP transport is supported
-        /// </summary>
-        public bool Http { get; set; }
-
-        /// <summary>
-        /// Whether MCP SSE transport is supported
-        /// </summary>
-        public bool Sse { get; set; }
-    }
-
-    /// <summary>
-    /// Information about the ACP server
+    /// Information about the ACP server/agent. Used to populate the ACP
+    /// <see cref="Implementation"/> block in the initialize response.
     /// </summary>
     public class ServerInfo
     {
@@ -155,200 +30,54 @@ namespace Andy.Acp.Core.Protocol
     }
 
     /// <summary>
-    /// Capabilities provided by the server
+    /// Legacy aggregate capability object retained for the full example server. New code
+    /// should advertise capabilities via <see cref="AcpAgentCapabilities"/>.
     /// </summary>
     public class ServerCapabilities
     {
-        /// <summary>
-        /// Tools capability
-        /// </summary>
         public ToolsCapability? Tools { get; set; }
-
-        /// <summary>
-        /// Prompts capability
-        /// </summary>
         public PromptsCapability? Prompts { get; set; }
-
-        /// <summary>
-        /// Resources capability
-        /// </summary>
         public ResourcesCapability? Resources { get; set; }
-
-        /// <summary>
-        /// Logging capability
-        /// </summary>
         public LoggingCapability? Logging { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports loading existing sessions
-        /// </summary>
         public bool LoadSession { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports audio in prompts
-        /// </summary>
         public bool AudioPrompts { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports images in prompts
-        /// </summary>
         public bool ImagePrompts { get; set; }
-
-        /// <summary>
-        /// Whether the agent supports embedded context in prompts
-        /// </summary>
         public bool EmbeddedContext { get; set; }
-
-        /// <summary>
-        /// Whether file system operations are supported
-        /// </summary>
         public bool FileSystemSupported { get; set; }
-
-        /// <summary>
-        /// Whether terminal operations are supported
-        /// </summary>
         public bool TerminalSupported { get; set; }
-
-        /// <summary>
-        /// Additional custom capabilities
-        /// </summary>
         public Dictionary<string, object>? Extensions { get; set; }
     }
 
-    /// <summary>
-    /// Tools capability configuration
-    /// </summary>
+    /// <summary>Tools capability configuration (legacy/example).</summary>
     public class ToolsCapability
     {
-        /// <summary>
-        /// Whether tools are supported
-        /// </summary>
         public bool Supported { get; set; }
-
-        /// <summary>
-        /// List of available tool names
-        /// </summary>
         public string[]? Available { get; set; }
-
-        /// <summary>
-        /// Whether tool listing is supported
-        /// </summary>
         public bool? ListSupported { get; set; }
-
-        /// <summary>
-        /// Whether tool execution is supported
-        /// </summary>
         public bool? ExecutionSupported { get; set; }
     }
 
-    /// <summary>
-    /// Prompts capability configuration
-    /// </summary>
+    /// <summary>Prompts capability configuration (legacy/example).</summary>
     public class PromptsCapability
     {
-        /// <summary>
-        /// Whether prompts are supported
-        /// </summary>
         public bool Supported { get; set; }
-
-        /// <summary>
-        /// List of available prompt names
-        /// </summary>
         public string[]? Available { get; set; }
-
-        /// <summary>
-        /// Whether prompt listing is supported
-        /// </summary>
         public bool? ListSupported { get; set; }
     }
 
-    /// <summary>
-    /// Resources capability configuration
-    /// </summary>
+    /// <summary>Resources capability configuration (legacy/example).</summary>
     public class ResourcesCapability
     {
-        /// <summary>
-        /// Whether resources are supported
-        /// </summary>
         public bool Supported { get; set; }
-
-        /// <summary>
-        /// Supported URI schemes (e.g., "file://", "http://")
-        /// </summary>
         public string[]? SupportedSchemes { get; set; }
-
-        /// <summary>
-        /// Whether resource listing is supported
-        /// </summary>
         public bool? ListSupported { get; set; }
-
-        /// <summary>
-        /// Whether resource subscription is supported
-        /// </summary>
         public bool? SubscriptionSupported { get; set; }
     }
 
-    /// <summary>
-    /// Logging capability configuration
-    /// </summary>
+    /// <summary>Logging capability configuration (legacy/example).</summary>
     public class LoggingCapability
     {
-        /// <summary>
-        /// Whether logging is supported
-        /// </summary>
         public bool Supported { get; set; }
-
-        /// <summary>
-        /// Supported log levels
-        /// </summary>
         public string[]? SupportedLevels { get; set; }
-    }
-
-    /// <summary>
-    /// Session information returned with initialize result
-    /// </summary>
-    public class SessionInfo
-    {
-        /// <summary>
-        /// Unique session identifier
-        /// </summary>
-        public required string SessionId { get; set; }
-
-        /// <summary>
-        /// Session timeout in milliseconds
-        /// </summary>
-        public int? TimeoutMs { get; set; }
-
-        /// <summary>
-        /// Additional session metadata
-        /// </summary>
-        public Dictionary<string, object>? Metadata { get; set; }
-    }
-
-    /// <summary>
-    /// Parameters for the shutdown request
-    /// </summary>
-    public class ShutdownParams
-    {
-        /// <summary>
-        /// Optional reason for shutdown
-        /// </summary>
-        public string? Reason { get; set; }
-    }
-
-    /// <summary>
-    /// Result of the shutdown request
-    /// </summary>
-    public class ShutdownResult
-    {
-        /// <summary>
-        /// Whether the shutdown was successful
-        /// </summary>
-        public bool Success { get; set; }
-
-        /// <summary>
-        /// Optional message
-        /// </summary>
-        public string? Message { get; set; }
     }
 }

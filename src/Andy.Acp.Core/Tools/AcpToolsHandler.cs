@@ -16,7 +16,7 @@ namespace Andy.Acp.Core.Tools
     public class AcpToolsHandler
     {
         private readonly IAcpToolProvider _toolProvider;
-        private readonly AcpProtocolHandler? _protocolHandler;
+        private readonly AcpConnectionState? _connectionState;
         private readonly ILogger<AcpToolsHandler>? _logger;
 
         /// <summary>
@@ -39,11 +39,11 @@ namespace Andy.Acp.Core.Tools
         /// <param name="logger">Optional logger.</param>
         public AcpToolsHandler(
             IAcpToolProvider toolProvider,
-            AcpProtocolHandler? protocolHandler,
+            AcpConnectionState? connectionState,
             ILogger<AcpToolsHandler>? logger = null)
         {
             _toolProvider = toolProvider ?? throw new ArgumentNullException(nameof(toolProvider));
-            _protocolHandler = protocolHandler;
+            _connectionState = connectionState;
             _logger = logger;
         }
 
@@ -52,27 +52,17 @@ namespace Andy.Acp.Core.Tools
         /// </summary>
         private void ValidateSessionState()
         {
-            if (_protocolHandler == null)
+            if (_connectionState == null)
             {
-                // No protocol handler means no session validation
+                // No connection state supplied means no initialize validation.
                 return;
             }
 
-            var session = _protocolHandler.CurrentSession;
-            if (session == null)
+            if (!_connectionState.Initialized)
             {
                 throw new JsonRpcProtocolException(
                     JsonRpcErrorCodes.SessionNotInitialized,
-                    "No active session. Call initialize first."
-                );
-            }
-
-            if (session.State == SessionState.ShuttingDown ||
-                session.State == SessionState.Terminated)
-            {
-                throw new JsonRpcProtocolException(
-                    JsonRpcErrorCodes.InvalidRequest,
-                    "Session is shutting down or terminated. Tool operations are not allowed."
+                    "Connection is not initialized. Call initialize first."
                 );
             }
         }
