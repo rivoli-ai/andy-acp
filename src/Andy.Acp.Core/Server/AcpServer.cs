@@ -106,14 +106,19 @@ namespace Andy.Acp.Core.Server
                         Audio = agentCapabilities.AudioPrompts,
                         EmbeddedContext = agentCapabilities.EmbeddedContext
                     },
-                    McpCapabilities = new AcpMcpCapabilities { Http = false, Sse = false },
-                    SessionCapabilities = _agentProvider is ISessionCatalogProvider
+                    McpCapabilities = new AcpMcpCapabilities
+                    {
+                        Http = agentCapabilities.McpHttp,
+                        Sse = agentCapabilities.McpSse
+                    },
+                    SessionCapabilities = _agentProvider is ISessionCatalogProvider || agentCapabilities.AdditionalDirectories
                         ? new AcpSessionCapabilities
                         {
-                            List = new CapabilityMarker(),
-                            Delete = new CapabilityMarker(),
-                            Resume = new CapabilityMarker(),
-                            Close = new CapabilityMarker()
+                            List = _agentProvider is ISessionCatalogProvider ? new CapabilityMarker() : null,
+                            Delete = _agentProvider is ISessionCatalogProvider ? new CapabilityMarker() : null,
+                            Resume = _agentProvider is ISessionCatalogProvider ? new CapabilityMarker() : null,
+                            Close = _agentProvider is ISessionCatalogProvider ? new CapabilityMarker() : null,
+                            AdditionalDirectories = agentCapabilities.AdditionalDirectories ? new CapabilityMarker() : null
                         }
                         : null,
                     Auth = authProvider?.SupportsLogout == true
