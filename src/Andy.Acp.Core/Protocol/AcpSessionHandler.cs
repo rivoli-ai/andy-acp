@@ -114,6 +114,8 @@ namespace Andy.Acp.Core.Protocol
             if (!Path.IsPathRooted(req!.Cwd))
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "cwd must be an absolute path");
 
+            ValidateMcpServers(req.McpServers);
+
             var sessionParams = new NewSessionParams
             {
                 Cwd = req.Cwd,
@@ -147,6 +149,8 @@ namespace Andy.Acp.Core.Protocol
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
             if (string.IsNullOrEmpty(req!.Cwd))
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "cwd is required");
+
+            ValidateMcpServers(req.McpServers);
 
             var loadParams = new LoadSessionParams
             {
@@ -266,6 +270,8 @@ namespace Andy.Acp.Core.Protocol
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
             if (string.IsNullOrEmpty(req!.Cwd))
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "cwd is required");
+
+            ValidateMcpServers(req.McpServers);
 
             var resumeParams = new LoadSessionParams
             {
@@ -417,6 +423,45 @@ namespace Andy.Acp.Core.Protocol
 
             // session/cancel is a notification; no response is sent.
             return null;
+        }
+
+        /// <summary>
+        /// Validates MCP server configurations against the agent's declared MCP transport
+        /// capabilities: stdio is always accepted; http and sse require the corresponding
+        /// capability, otherwise the request fails with invalid-params. The configurations
+        /// themselves are passed through to the agent as data — connecting to MCP servers
+        /// is the agent's responsibility, not this library's.
+        /// </summary>
+        private void ValidateMcpServers(List<McpServerConfig>? servers)
+        {
+            if (servers == null || servers.Count == 0)
+                return;
+
+            var caps = _agentProvider.GetCapabilities();
+
+            foreach (var server in servers)
+            {
+                switch (server.Type)
+                {
+                    case null:
+                    case "":
+                    case "stdio":
+                        break; // stdio is the baseline transport
+                    case "http":
+                        if (!caps.McpHttp)
+                            throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                                $"HTTP MCP servers are not supported by this agent (server: {server.Name})");
+                        break;
+                    case "sse":
+                        if (!caps.McpSse)
+                            throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                                $"SSE MCP servers are not supported by this agent (server: {server.Name})");
+                        break;
+                    default:
+                        throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                            $"Unknown MCP server type: {server.Type}");
+                }
+            }
         }
 
         /// <summary>

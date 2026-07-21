@@ -424,15 +424,22 @@ Implemented and covered by tests:
 - Schema-backed validation of wire output against the pinned ACP v1 schema
   (`schema-v1.20.0`)
 
-Remaining gaps:
-- MCP server configurations are passed through to the agent as data; this library
-  does not itself connect to MCP servers
-- `SessionConfigOption` select groups (`SessionConfigSelectGroup`) are not modeled
-  (flat option lists only)
-- The `additionalDirectories` session capability marker is not advertised (the
-  field is still passed through to the agent when clients send it)
+Also implemented (gap-closure epic):
+- Grouped select config options (`SessionConfigSelectGroup`) alongside flat lists
+- `sessionCapabilities.additionalDirectories` marker, driven by
+  `AgentCapabilities.AdditionalDirectories`
+- Agent-declared MCP transport capabilities (`AgentCapabilities.McpHttp`/`McpSse`)
+  advertised as `mcpCapabilities`; incoming `mcpServers` entries are validated
+  against them (stdio always accepted)
 
-JSON-RPC batch requests are intentionally **not** supported and are rejected.
+By design (not gaps):
+- MCP server configurations are **passed through to the agent as data**; connecting
+  to MCP servers is the agent's responsibility, out of scope for this wire-protocol
+  library
+- JSON-RPC batch requests are intentionally **not** supported and are rejected
+
+The protocol version served is centralized in `AcpVersions` (currently v1 only);
+no other code hardcodes a protocol version.
 
 ## Contributing
 

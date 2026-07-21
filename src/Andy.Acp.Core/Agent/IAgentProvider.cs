@@ -106,6 +106,27 @@ namespace Andy.Acp.Core.Agent
         public bool EmbeddedContext { get; set; } = false;
 
         /// <summary>
+        /// Whether the agent supports additional readable directories on session
+        /// requests. Advertised as the <c>sessionCapabilities.additionalDirectories</c>
+        /// marker.
+        /// </summary>
+        public bool AdditionalDirectories { get; set; } = false;
+
+        /// <summary>
+        /// Whether the agent accepts HTTP MCP server configurations. Advertised as
+        /// <c>mcpCapabilities.http</c>; http configs are rejected with invalid-params
+        /// when false.
+        /// </summary>
+        public bool McpHttp { get; set; } = false;
+
+        /// <summary>
+        /// Whether the agent accepts SSE MCP server configurations. Advertised as
+        /// <c>mcpCapabilities.sse</c>; sse configs are rejected with invalid-params
+        /// when false.
+        /// </summary>
+        public bool McpSse { get; set; } = false;
+
+        /// <summary>
         /// Custom capabilities (extensibility)
         /// </summary>
         public Dictionary<string, object>? Extensions { get; set; }

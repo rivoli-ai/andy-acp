@@ -25,11 +25,11 @@ namespace Andy.Acp.Core.Protocol
         private readonly IAuthenticationProvider? _authProvider;
         private readonly ILogger<AcpProtocolHandler>? _logger;
 
-        /// <summary>The highest ACP protocol version this agent supports.</summary>
-        public const int ProtocolVersion = 1;
+        /// <summary>The highest ACP protocol version this agent supports (see <see cref="AcpVersions"/>).</summary>
+        public const int ProtocolVersion = AcpVersions.Current;
 
-        /// <summary>The lowest ACP protocol version this agent supports.</summary>
-        public const int MinProtocolVersion = 1;
+        /// <summary>The lowest ACP protocol version this agent supports (see <see cref="AcpVersions"/>).</summary>
+        public const int MinProtocolVersion = AcpVersions.Minimum;
 
         public AcpProtocolHandler(
             AcpConnectionState state,

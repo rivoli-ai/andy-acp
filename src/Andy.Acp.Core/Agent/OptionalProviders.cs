@@ -131,9 +131,23 @@ namespace Andy.Acp.Core.Agent
             }
         }
 
-        /// <summary>Available options (select variant).</summary>
-        [JsonPropertyName("options")]
+        /// <summary>Available options as a flat list (select variant).</summary>
+        [JsonIgnore]
         public List<SessionConfigSelectOption>? Options { get; set; }
+
+        /// <summary>
+        /// Available options organized in groups (select variant). When set, takes
+        /// precedence over <see cref="Options"/> on the wire.
+        /// </summary>
+        [JsonIgnore]
+        public List<SessionConfigSelectGroup>? Groups { get; set; }
+
+        /// <summary>
+        /// The wire <c>options</c> member: ACP allows either a flat option array or a
+        /// group array.
+        /// </summary>
+        [JsonPropertyName("options")]
+        public object? OptionsWire => Groups is { Count: > 0 } ? Groups : Options;
     }
 
     /// <summary>A selectable value of a select config option.</summary>
@@ -147,6 +161,20 @@ namespace Andy.Acp.Core.Agent
 
         [JsonPropertyName("description")]
         public string? Description { get; set; }
+    }
+
+    /// <summary>A named group of selectable values (ACP <c>SessionConfigSelectGroup</c>).</summary>
+    public class SessionConfigSelectGroup
+    {
+        /// <summary>Group id (ACP <c>group</c>).</summary>
+        [JsonPropertyName("group")]
+        public string Group { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("options")]
+        public List<SessionConfigSelectOption> Options { get; set; } = new();
     }
 
     /// <summary>
