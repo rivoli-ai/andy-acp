@@ -25,6 +25,10 @@ namespace Andy.Acp.Core.Server
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<AcpServer>? _logger;
 
+        // In-flight inbound requests by canonical id, so $/cancel_request can cancel the
+        // request it targets. Cancelled requests respond with -32800 (request cancelled).
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _inFlightRequests = new();
+
         /// <summary>
         /// Create a new ACP server for the given agent. Filesystem and terminal operations
         /// are performed as agent → client requests via <see cref="Client.IAcpClient"/>
@@ -88,8 +92,11 @@ namespace Andy.Acp.Core.Server
                 // Create session manager
                 var sessionManager = new SessionManager(_loggerFactory?.CreateLogger<SessionManager>());
 
-                // Get agent capabilities and advertise them in the ACP shape.
+                // Get agent capabilities and advertise them in the ACP shape. Optional
+                // surface (session catalog, auth) is advertised from the optional
+                // provider interfaces the agent implements.
                 var agentCapabilities = _agentProvider.GetCapabilities();
+                var authProvider = _agentProvider as IAuthenticationProvider;
                 var acpAgentCapabilities = new AcpAgentCapabilities
                 {
                     LoadSession = agentCapabilities.LoadSession,
@@ -99,19 +106,33 @@ namespace Andy.Acp.Core.Server
                         Audio = agentCapabilities.AudioPrompts,
                         EmbeddedContext = agentCapabilities.EmbeddedContext
                     },
-                    McpCapabilities = new AcpMcpCapabilities { Http = false, Sse = false }
+                    McpCapabilities = new AcpMcpCapabilities { Http = false, Sse = false },
+                    SessionCapabilities = _agentProvider is ISessionCatalogProvider
+                        ? new AcpSessionCapabilities
+                        {
+                            List = new CapabilityMarker(),
+                            Delete = new CapabilityMarker(),
+                            Resume = new CapabilityMarker(),
+                            Close = new CapabilityMarker()
+                        }
+                        : null,
+                    Auth = authProvider?.SupportsLogout == true
+                        ? new AcpAgentAuthCapabilities { Logout = new CapabilityMarker() }
+                        : null
                 };
 
                 // Shared connection state enforces initialize-before-session ordering and
                 // carries the negotiated client capabilities.
                 var connectionState = new AcpConnectionState();
 
-                // Register the initialize handshake handler.
+                // Register the initialize handshake handler (plus authenticate/logout when
+                // the agent implements IAuthenticationProvider).
                 var protocolHandler = new AcpProtocolHandler(
                     connectionState,
                     _serverInfo,
                     acpAgentCapabilities,
-                    _loggerFactory?.CreateLogger<AcpProtocolHandler>());
+                    _loggerFactory?.CreateLogger<AcpProtocolHandler>(),
+                    authProvider);
                 protocolHandler.RegisterMethods(jsonRpcHandler);
 
                 // Agent → client request channel (fs/*, terminal/*, session/request_permission).
@@ -250,7 +271,33 @@ namespace Andy.Acp.Core.Server
                     _logger?.LogDebug("Processing {Kind}: {Method} (ID: {Id})",
                         request.IsNotification ? "notification" : "request", request.Method, request.Id);
 
-                    response = await jsonRpcHandler.HandleRequestAsync(request, cancellationToken).ConfigureAwait(false);
+                    if (request.Method == "$/cancel_request")
+                    {
+                        // ACP protocol-level cancellation: cancel the in-flight request with
+                        // the given id. This is a notification; no response is sent.
+                        HandleCancelRequest(request);
+                        return;
+                    }
+
+                    if (!request.IsNotification)
+                    {
+                        // Track cancellable in-flight requests by canonical id.
+                        var key = CanonicalId(request.Id);
+                        using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        _inFlightRequests[key] = requestCts;
+                        try
+                        {
+                            response = await jsonRpcHandler.HandleRequestAsync(request, requestCts.Token).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _inFlightRequests.TryRemove(key, out _);
+                        }
+                    }
+                    else
+                    {
+                        response = await jsonRpcHandler.HandleRequestAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 else if (jsonRpcMessage is JsonRpcResponse responseMessage)
                 {
@@ -288,5 +335,49 @@ namespace Andy.Acp.Core.Server
                 }
             }
         }
+
+        /// <summary>
+        /// Handles a <c>$/cancel_request</c> notification by cancelling the matching
+        /// in-flight request, if any. Unknown or already-completed ids are ignored.
+        /// </summary>
+        private void HandleCancelRequest(JsonRpcRequest request)
+        {
+            string? key = null;
+            if (request.Params is System.Text.Json.JsonElement el &&
+                el.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                el.TryGetProperty("requestId", out var idEl))
+            {
+                key = idEl.GetRawText();
+            }
+
+            if (key == null)
+            {
+                _logger?.LogWarning("$/cancel_request without a requestId; ignoring");
+                return;
+            }
+
+            if (_inFlightRequests.TryGetValue(key, out var cts))
+            {
+                _logger?.LogInformation("Cancelling in-flight request {RequestId}", key);
+                try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            }
+            else
+            {
+                _logger?.LogDebug("$/cancel_request for unknown/completed request {RequestId}", key);
+            }
+        }
+
+        /// <summary>
+        /// Canonicalizes a request id for in-flight tracking so that the id in a
+        /// $/cancel_request matches regardless of representation. Uses raw JSON text
+        /// (e.g. <c>5</c> vs <c>"5"</c> stay distinct, as JSON-RPC requires).
+        /// </summary>
+        private static string CanonicalId(object? id) => id switch
+        {
+            null => "null",
+            System.Text.Json.JsonElement el => el.GetRawText(),
+            string s => "\"" + s + "\"",
+            _ => Convert.ToString(id, System.Globalization.CultureInfo.InvariantCulture) ?? "null"
+        };
     }
 }

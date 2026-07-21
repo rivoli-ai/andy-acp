@@ -19,7 +19,7 @@ namespace Andy.Acp.Tests.JsonRpc
         [InlineData(JsonRpcErrorCodes.ResourceNotFound, "Resource not found")]
         [InlineData(JsonRpcErrorCodes.ResourceAccessDenied, "Resource access denied")]
         [InlineData(JsonRpcErrorCodes.Timeout, "Operation timeout")]
-        [InlineData(JsonRpcErrorCodes.Cancelled, "Operation cancelled")]
+        [InlineData(JsonRpcErrorCodes.RequestCancelled, "Request cancelled")]
         public void GetMessage_WithKnownErrorCode_ReturnsCorrectMessage(int errorCode, string expectedMessage)
         {
             // Act
@@ -104,16 +104,20 @@ namespace Andy.Acp.Tests.JsonRpc
         [Fact]
         public void AcpErrorCodes_AreInCorrectRange()
         {
-            // Assert ACP-specific error codes are in the -32000 to -32099 range
-            Assert.InRange(JsonRpcErrorCodes.SessionNotInitialized, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.SessionAlreadyInitialized, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.InvalidProtocolVersion, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.ToolNotFound, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.ToolExecutionFailed, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.ResourceNotFound, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.ResourceAccessDenied, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.Timeout, -32099, -32000);
-            Assert.InRange(JsonRpcErrorCodes.Cancelled, -32099, -32000);
+            // Implementation-defined codes stay in the -32000..-32099 server-error range
+            // while avoiding the ACP-reserved values (-32000, -32002, -32800).
+            Assert.InRange(JsonRpcErrorCodes.SessionNotInitialized, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.SessionAlreadyInitialized, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.InvalidProtocolVersion, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.ToolNotFound, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.ToolExecutionFailed, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.ResourceAccessDenied, -32099, -32001);
+            Assert.InRange(JsonRpcErrorCodes.Timeout, -32099, -32001);
+
+            // ACP-reserved codes carry their protocol-assigned values.
+            Assert.Equal(-32000, JsonRpcErrorCodes.AuthRequired);
+            Assert.Equal(-32002, JsonRpcErrorCodes.ResourceNotFound);
+            Assert.Equal(-32800, JsonRpcErrorCodes.RequestCancelled);
         }
     }
 }

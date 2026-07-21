@@ -65,11 +65,27 @@ namespace Andy.Acp.Core.Protocol
             _jsonRpcHandler.RegisterMethod("session/set_mode", HandleSetModeAsync);
             _jsonRpcHandler.RegisterMethod("session/cancel", HandleCancelAsync);
 
-            _logger?.LogInformation(
-                "Registered ACP session methods: session/new, session/load, session/prompt, session/set_mode, session/cancel");
+            // Optional ACP surface, registered only when the agent implements the
+            // corresponding provider interface (capabilities are advertised to match).
+            if (_agentProvider is ISessionConfigProvider)
+                _jsonRpcHandler.RegisterMethod("session/set_config_option", HandleSetConfigOptionAsync);
+
+            if (_agentProvider is ISessionCatalogProvider)
+            {
+                _jsonRpcHandler.RegisterMethod("session/list", HandleListSessionsAsync);
+                _jsonRpcHandler.RegisterMethod("session/delete", HandleDeleteSessionAsync);
+                _jsonRpcHandler.RegisterMethod("session/resume", HandleResumeSessionAsync);
+                _jsonRpcHandler.RegisterMethod("session/close", HandleCloseSessionAsync);
+            }
+
+            _logger?.LogInformation("Registered ACP session methods (config: {Config}, catalog: {Catalog})",
+                _agentProvider is ISessionConfigProvider, _agentProvider is ISessionCatalogProvider);
         }
 
-        /// <summary>Throws if the connection has not completed the initialize handshake.</summary>
+        /// <summary>
+        /// Throws if the connection has not completed the initialize handshake, or if the
+        /// agent requires authentication that has not happened yet (ACP error -32000).
+        /// </summary>
         private void EnsureInitialized()
         {
             if (!_state.Initialized)
@@ -77,6 +93,13 @@ namespace Andy.Acp.Core.Protocol
                 throw new JsonRpcProtocolException(
                     JsonRpcErrorCodes.SessionNotInitialized,
                     "Connection is not initialized. Call initialize first.");
+            }
+
+            if (!_state.Authenticated)
+            {
+                throw new JsonRpcProtocolException(
+                    JsonRpcErrorCodes.AuthRequired,
+                    "Authentication required. Call authenticate first.");
             }
         }
 
@@ -105,7 +128,8 @@ namespace Andy.Acp.Core.Protocol
             return new
             {
                 sessionId = metadata.SessionId,
-                modes = metadata.Modes
+                modes = metadata.Modes,
+                configOptions = metadata.ConfigOptions
             };
         }
 
@@ -145,8 +169,147 @@ namespace Andy.Acp.Core.Protocol
             // ACP LoadSessionResponse: optional modes/configOptions, no sessionId.
             return new
             {
-                modes = metadata.Modes
+                modes = metadata.Modes,
+                configOptions = metadata.ConfigOptions
             };
+        }
+
+        private async Task<object?> HandleSetConfigOptionAsync(object? parameters, CancellationToken cancellationToken)
+        {
+            EnsureInitialized();
+
+            var configProvider = (ISessionConfigProvider)_agentProvider;
+            var req = DeserializeParams<SetConfigOptionRequest>(parameters);
+
+            if (string.IsNullOrEmpty(req?.SessionId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
+            if (string.IsNullOrEmpty(req!.ConfigId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "configId is required");
+
+            // The value variant is discriminated by JSON kind: boolean for the "boolean"
+            // variant, string for the default "value_id" variant.
+            var value = new SessionConfigValue();
+            if (req.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                value.BoolValue = req.Value.GetBoolean();
+            else if (req.Value.ValueKind is JsonValueKind.String)
+                value.ValueId = req.Value.GetString();
+            else
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                    "value must be a string (value id) or a boolean");
+
+            IReadOnlyList<SessionConfigOption> options;
+            try
+            {
+                options = await configProvider.SetConfigOptionAsync(req.SessionId, req.ConfigId, value, cancellationToken);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, ex.Message);
+            }
+
+            _logger?.LogInformation("Set config option {ConfigId} for session {SessionId}", req.ConfigId, req.SessionId);
+
+            // ACP SetSessionConfigOptionResponse: the full updated option list (required).
+            return new { configOptions = options };
+        }
+
+        private async Task<object?> HandleListSessionsAsync(object? parameters, CancellationToken cancellationToken)
+        {
+            EnsureInitialized();
+
+            var catalog = (ISessionCatalogProvider)_agentProvider;
+            var req = DeserializeParams<ListSessionsRequest>(parameters) ?? new ListSessionsRequest();
+
+            var result = await catalog.ListSessionsAsync(req.Cwd, req.Cursor, cancellationToken);
+
+            return new
+            {
+                sessions = result.Sessions.Select(s => new
+                {
+                    sessionId = s.SessionId,
+                    cwd = s.Cwd,
+                    additionalDirectories = s.AdditionalDirectories,
+                    title = s.Title,
+                    updatedAt = s.UpdatedAt?.ToString("o")
+                }).ToArray(),
+                nextCursor = result.NextCursor
+            };
+        }
+
+        private async Task<object?> HandleDeleteSessionAsync(object? parameters, CancellationToken cancellationToken)
+        {
+            EnsureInitialized();
+
+            var catalog = (ISessionCatalogProvider)_agentProvider;
+            var req = DeserializeParams<SessionIdRequest>(parameters);
+
+            if (string.IsNullOrEmpty(req?.SessionId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
+
+            var deleted = await catalog.DeleteSessionAsync(req!.SessionId, cancellationToken);
+            if (!deleted)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.ResourceNotFound,
+                    $"Session not found: {req.SessionId}");
+
+            _logger?.LogInformation("Deleted session {SessionId}", req.SessionId);
+            return new { };
+        }
+
+        private async Task<object?> HandleResumeSessionAsync(object? parameters, CancellationToken cancellationToken)
+        {
+            EnsureInitialized();
+
+            var catalog = (ISessionCatalogProvider)_agentProvider;
+            var req = DeserializeParams<LoadSessionRequest>(parameters);
+
+            if (string.IsNullOrEmpty(req?.SessionId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
+            if (string.IsNullOrEmpty(req!.Cwd))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "cwd is required");
+
+            var resumeParams = new LoadSessionParams
+            {
+                SessionId = req.SessionId,
+                Cwd = req.Cwd,
+                McpServers = req.McpServers ?? new List<McpServerConfig>(),
+                AdditionalDirectories = req.AdditionalDirectories
+            };
+
+            var metadata = await catalog.ResumeSessionAsync(resumeParams, cancellationToken);
+            if (metadata == null)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.ResourceNotFound,
+                    $"Session not found: {req.SessionId}");
+
+            _logger?.LogInformation("Resumed session {SessionId}", req.SessionId);
+
+            // ACP ResumeSessionResponse: optional modes/configOptions (no history replay).
+            return new
+            {
+                modes = metadata.Modes,
+                configOptions = metadata.ConfigOptions
+            };
+        }
+
+        private async Task<object?> HandleCloseSessionAsync(object? parameters, CancellationToken cancellationToken)
+        {
+            EnsureInitialized();
+
+            var catalog = (ISessionCatalogProvider)_agentProvider;
+            var req = DeserializeParams<SessionIdRequest>(parameters);
+
+            if (string.IsNullOrEmpty(req?.SessionId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "sessionId is required");
+
+            // Closing a session also cancels any prompt still in flight for it.
+            if (_activePrompts.TryGetValue(req!.SessionId, out var promptCts))
+            {
+                try { promptCts.Cancel(); } catch (ObjectDisposedException) { }
+            }
+
+            await catalog.CloseSessionAsync(req.SessionId, cancellationToken);
+
+            _logger?.LogInformation("Closed session {SessionId}", req.SessionId);
+            return new { };
         }
 
         private async Task<object?> HandlePromptAsync(object? parameters, CancellationToken cancellationToken)
@@ -378,6 +541,36 @@ namespace Andy.Acp.Core.Protocol
         {
             [JsonPropertyName("sessionId")]
             public string SessionId { get; set; } = string.Empty;
+        }
+
+        private class SessionIdRequest
+        {
+            [JsonPropertyName("sessionId")]
+            public string SessionId { get; set; } = string.Empty;
+        }
+
+        private class SetConfigOptionRequest
+        {
+            [JsonPropertyName("sessionId")]
+            public string SessionId { get; set; } = string.Empty;
+
+            [JsonPropertyName("configId")]
+            public string ConfigId { get; set; } = string.Empty;
+
+            [JsonPropertyName("type")]
+            public string? Type { get; set; }
+
+            [JsonPropertyName("value")]
+            public JsonElement Value { get; set; }
+        }
+
+        private class ListSessionsRequest
+        {
+            [JsonPropertyName("cwd")]
+            public string? Cwd { get; set; }
+
+            [JsonPropertyName("cursor")]
+            public string? Cursor { get; set; }
         }
     }
 }

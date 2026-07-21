@@ -32,52 +32,65 @@ namespace Andy.Acp.Core.JsonRpc
         /// </summary>
         public const int InternalError = -32603;
 
-        // Server error codes (-32000 to -32099 are reserved for implementation-defined server-errors)
+        // ACP-defined error codes (reserved meanings in the Agent Client Protocol)
 
         /// <summary>
-        /// ACP session not initialized
+        /// ACP: authentication is required before this method can be called.
         /// </summary>
-        public const int SessionNotInitialized = -32000;
+        public const int AuthRequired = -32000;
 
         /// <summary>
-        /// ACP session already initialized
+        /// ACP: the referenced resource was not found.
         /// </summary>
-        public const int SessionAlreadyInitialized = -32001;
+        public const int ResourceNotFound = -32002;
+
+        /// <summary>
+        /// ACP: the request was cancelled (e.g. via $/cancel_request).
+        /// </summary>
+        public const int RequestCancelled = -32800;
+
+        /// <summary>
+        /// Alias for <see cref="RequestCancelled"/> kept for source compatibility.
+        /// </summary>
+        public const int Cancelled = RequestCancelled;
+
+        // Implementation-defined server error codes. These deliberately avoid the
+        // ACP-reserved values above (-32000, -32002, -32800).
+
+        /// <summary>
+        /// Connection not initialized (initialize has not completed)
+        /// </summary>
+        public const int SessionNotInitialized = -32010;
+
+        /// <summary>
+        /// Connection already initialized
+        /// </summary>
+        public const int SessionAlreadyInitialized = -32011;
 
         /// <summary>
         /// Invalid ACP protocol version
         /// </summary>
-        public const int InvalidProtocolVersion = -32002;
+        public const int InvalidProtocolVersion = -32012;
 
         /// <summary>
         /// Tool not found or not available
         /// </summary>
-        public const int ToolNotFound = -32003;
+        public const int ToolNotFound = -32013;
 
         /// <summary>
         /// Tool execution failed
         /// </summary>
-        public const int ToolExecutionFailed = -32004;
-
-        /// <summary>
-        /// Resource not found or not accessible
-        /// </summary>
-        public const int ResourceNotFound = -32005;
+        public const int ToolExecutionFailed = -32014;
 
         /// <summary>
         /// Resource access denied
         /// </summary>
-        public const int ResourceAccessDenied = -32006;
+        public const int ResourceAccessDenied = -32016;
 
         /// <summary>
         /// Operation timeout
         /// </summary>
-        public const int Timeout = -32007;
-
-        /// <summary>
-        /// Operation cancelled
-        /// </summary>
-        public const int Cancelled = -32008;
+        public const int Timeout = -32017;
 
         /// <summary>
         /// Gets a human-readable message for the given error code
@@ -93,15 +106,16 @@ namespace Andy.Acp.Core.JsonRpc
                 MethodNotFound => "Method not found",
                 InvalidParams => "Invalid params",
                 InternalError => "Internal error",
+                AuthRequired => "Authentication required",
+                ResourceNotFound => "Resource not found",
+                RequestCancelled => "Request cancelled",
                 SessionNotInitialized => "Session not initialized",
                 SessionAlreadyInitialized => "Session already initialized",
                 InvalidProtocolVersion => "Invalid protocol version",
                 ToolNotFound => "Tool not found",
                 ToolExecutionFailed => "Tool execution failed",
-                ResourceNotFound => "Resource not found",
                 ResourceAccessDenied => "Resource access denied",
                 Timeout => "Operation timeout",
-                Cancelled => "Operation cancelled",
                 _ => "Unknown error"
             };
         }

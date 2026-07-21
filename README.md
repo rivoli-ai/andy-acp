@@ -34,7 +34,7 @@ andy-acp/
 │       ├── Server/                 # Unified ACP server
 │       └── Tools/                  # Tool framework (MCP compatibility)
 ├── tests/
-│   └── Andy.Acp.Tests/             # Comprehensive unit tests (276 tests)
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (303 tests)
 │       ├── Transport/
 │       ├── JsonRpc/
 │       ├── Session/
@@ -155,7 +155,7 @@ andy-acp/
 - **Response streaming** working (word-by-word display in Zed)
 - **Session management** properly tracking conversation state
 
-**Total: 276 tests passing** (including schema-backed ACP v1 validation and end-to-end stdio flows)
+**Total: 303 tests passing** (including schema-backed ACP v1 validation and end-to-end stdio flows)
 
 ## Supported ACP version and capabilities
 
@@ -167,9 +167,16 @@ andy-acp/
 - **Client capabilities consumed:** `fs.readTextFile`, `fs.writeTextFile`, and `terminal`.
   The agent issues `fs/*`, `terminal/*`, and `session/request_permission` **to the client**
   and only when the client advertised the matching capability.
-- **Lifecycle methods:** `initialize`, `session/new`, `session/load`, `session/prompt`,
-  `session/set_mode` (by `modeId`), and the `session/cancel` notification. `initialized`,
-  `shutdown`, and `session/set_model` are **not** part of ACP v1 and are not implemented.
+- **Lifecycle methods:** `initialize`, optional `authenticate`/`logout`, `session/new`,
+  `session/load`, `session/prompt`, `session/set_mode` (by `modeId`), optional
+  `session/set_config_option` and the session catalog (`session/list`, `delete`,
+  `resume`, `close`), the `session/cancel` notification, and `$/cancel_request`.
+  `initialized`, `shutdown`, and `session/set_model` are **not** part of ACP v1 and are
+  not implemented (model selection flows through config options).
+- **Optional provider interfaces:** an `IAgentProvider` implementation opts into the
+  optional surface by additionally implementing `IAuthenticationProvider`,
+  `ISessionConfigProvider`, and/or `ISessionCatalogProvider` — capabilities and method
+  registration follow automatically.
 
 See **Known limitations** below for optional ACP v1 features not yet implemented.
 
@@ -393,24 +400,37 @@ The integration is in the [andy-cli repository](https://github.com/rivoli-ai/and
 
 Implemented and covered by tests:
 - `initialize` handshake with integer protocol-version negotiation
+- `authenticate` / `logout` with advertised auth methods and `-32000` auth-required
+  gating (opt-in via `IAuthenticationProvider`)
 - `session/new`, `session/load` (with history replay), `session/prompt`,
   `session/set_mode` (by `modeId`), `session/cancel`
-- All `session/update` variants (message/thought chunks, `tool_call`,
-  `tool_call_update`, `plan`)
+- `session/set_config_option` and config options in session responses — the ACP
+  mechanism for model selection and reasoning levels (opt-in via
+  `ISessionConfigProvider`)
+- Session catalog: `session/list`, `session/delete`, `session/resume`,
+  `session/close`, with `sessionCapabilities` advertisement (opt-in via
+  `ISessionCatalogProvider`)
+- All `session/update` variants: message/thought chunks, `tool_call` (with
+  `locations` and content/diff/terminal `ToolCallContent`), `tool_call_update`
+  (with `rawOutput`), `plan`, `available_commands_update`, `current_mode_update`,
+  `config_option_update`, `session_info_update`, `usage_update`
 - Multimodal prompt content blocks (text, image, audio, resource, resource_link),
   validated against negotiated capabilities
 - Agent → client `fs/read_text_file`, `fs/write_text_file`, `terminal/*`, and
   `session/request_permission`
+- `$/cancel_request` protocol-level cancellation (responds `-32800`)
+- ACP-reserved error codes: `-32000` auth required, `-32002` resource not found,
+  `-32800` request cancelled
 - Schema-backed validation of wire output against the pinned ACP v1 schema
+  (`schema-v1.20.0`)
 
-Not yet implemented (optional ACP v1 surface):
-- `authenticate` / `logout` and auth methods
-- `session/set_config_option` and the config-option system (models, reasoning levels)
-- `session/list`, `session/delete`, `session/resume`, `session/close`
-- MCP server transports beyond passing configuration through to the agent
-- `available_commands_update`, `current_mode_update`, `usage_update`,
-  `session_info_update`, `config_option_update` session updates
-- Diff/terminal `ToolCallContent` variants and tool-call `locations`
+Remaining gaps:
+- MCP server configurations are passed through to the agent as data; this library
+  does not itself connect to MCP servers
+- `SessionConfigOption` select groups (`SessionConfigSelectGroup`) are not modeled
+  (flat option lists only)
+- The `additionalDirectories` session capability marker is not advertised (the
+  field is still passed through to the agent when clients send it)
 
 JSON-RPC batch requests are intentionally **not** supported and are rejected.
 

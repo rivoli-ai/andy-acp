@@ -31,7 +31,7 @@ namespace Andy.Acp.Core.Protocol
         public AcpAgentCapabilities? AgentCapabilities { get; set; }
 
         [JsonPropertyName("authMethods")]
-        public List<object> AuthMethods { get; set; } = new();
+        public List<AuthMethodDescription> AuthMethods { get; set; } = new();
 
         [JsonPropertyName("agentInfo")]
         public Implementation? AgentInfo { get; set; }
@@ -81,6 +81,62 @@ namespace Andy.Acp.Core.Protocol
 
         [JsonPropertyName("mcpCapabilities")]
         public AcpMcpCapabilities? McpCapabilities { get; set; }
+
+        [JsonPropertyName("sessionCapabilities")]
+        public AcpSessionCapabilities? SessionCapabilities { get; set; }
+
+        [JsonPropertyName("auth")]
+        public AcpAgentAuthCapabilities? Auth { get; set; }
+    }
+
+    /// <summary>
+    /// An empty-object capability marker: in ACP several capability fields signal support
+    /// by their presence as <c>{}</c> rather than by a boolean value.
+    /// </summary>
+    public sealed class CapabilityMarker
+    {
+    }
+
+    /// <summary>
+    /// ACP <c>SessionCapabilities</c>: presence of a marker means the corresponding
+    /// session catalog method is supported.
+    /// </summary>
+    public class AcpSessionCapabilities
+    {
+        [JsonPropertyName("list")]
+        public CapabilityMarker? List { get; set; }
+
+        [JsonPropertyName("delete")]
+        public CapabilityMarker? Delete { get; set; }
+
+        [JsonPropertyName("resume")]
+        public CapabilityMarker? Resume { get; set; }
+
+        [JsonPropertyName("close")]
+        public CapabilityMarker? Close { get; set; }
+
+        [JsonPropertyName("additionalDirectories")]
+        public CapabilityMarker? AdditionalDirectories { get; set; }
+    }
+
+    /// <summary>ACP <c>AgentAuthCapabilities</c> (logout marker).</summary>
+    public class AcpAgentAuthCapabilities
+    {
+        [JsonPropertyName("logout")]
+        public CapabilityMarker? Logout { get; set; }
+    }
+
+    /// <summary>An advertised ACP auth method (variant <c>agent</c>).</summary>
+    public class AuthMethodDescription
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
     }
 
     /// <summary>ACP <c>PromptCapabilities</c>. Text and resource_link are baseline (not gated).</summary>
@@ -116,6 +172,13 @@ namespace Andy.Acp.Core.Protocol
     {
         /// <summary>True once a successful <c>initialize</c> exchange has completed.</summary>
         public bool Initialized { get; set; }
+
+        /// <summary>
+        /// True once <c>authenticate</c> has succeeded. Defaults to true; the initialize
+        /// handler sets it to false when the agent's authentication provider requires
+        /// authentication, and the authenticate handler sets it back on success.
+        /// </summary>
+        public bool Authenticated { get; set; } = true;
 
         /// <summary>The negotiated protocol version.</summary>
         public int ProtocolVersion { get; set; }

@@ -126,6 +126,178 @@ namespace Andy.Acp.Tests.Schema
             Assert.False(result.IsValid);
         }
 
+        // ---- optional surface -------------------------------------------------------
+
+        [Fact]
+        public void InitializeResponse_WithAuthAndSessionCapabilities_IsSchemaValid()
+        {
+            var result = new AcpInitializeResult
+            {
+                ProtocolVersion = 1,
+                AgentInfo = new Implementation { Name = "T", Version = "1.0" },
+                AgentCapabilities = new AcpAgentCapabilities
+                {
+                    LoadSession = true,
+                    SessionCapabilities = new AcpSessionCapabilities
+                    {
+                        List = new CapabilityMarker(),
+                        Delete = new CapabilityMarker(),
+                        Resume = new CapabilityMarker(),
+                        Close = new CapabilityMarker()
+                    },
+                    Auth = new AcpAgentAuthCapabilities { Logout = new CapabilityMarker() }
+                },
+                AuthMethods = new List<AuthMethodDescription>
+                {
+                    new() { Id = "api-key", Name = "API key", Description = "Use an API key" }
+                }
+            };
+
+            AcpSchema.AssertValid("InitializeResponse", JsonSerializer.Serialize(result, JsonRpcSerializer.Options));
+        }
+
+        [Fact]
+        public void SetSessionConfigOptionResponse_IsSchemaValid()
+        {
+            var options = new List<SessionConfigOption>
+            {
+                new()
+                {
+                    Type = "select",
+                    Id = "model",
+                    Name = "Model",
+                    Category = "model",
+                    CurrentValueId = "claude-fable-5",
+                    Options = new List<SessionConfigSelectOption>
+                    {
+                        new() { Value = "claude-fable-5", Name = "Fable 5" },
+                        new() { Value = "claude-opus-4-8", Name = "Opus 4.8" }
+                    }
+                },
+                new()
+                {
+                    Type = "boolean",
+                    Id = "thinking",
+                    Name = "Extended thinking",
+                    Category = "thought_level",
+                    CurrentBoolValue = true
+                }
+            };
+
+            var json = JsonSerializer.Serialize(new { configOptions = options }, JsonRpcSerializer.Options);
+            AcpSchema.AssertValid("SetSessionConfigOptionResponse", json);
+        }
+
+        [Fact]
+        public void ListSessionsResponse_IsSchemaValid()
+        {
+            AcpSchema.AssertValid("ListSessionsResponse",
+                "{\"sessions\":[{\"sessionId\":\"s1\",\"cwd\":\"/tmp\",\"title\":\"First\",\"updatedAt\":\"2026-07-01T00:00:00.0000000+00:00\"}],\"nextCursor\":\"n\"}");
+        }
+
+        [Fact]
+        public void ResumeSessionResponse_IsSchemaValid()
+        {
+            AcpSchema.AssertValid("ResumeSessionResponse",
+                "{\"modes\":{\"currentModeId\":\"chat\",\"availableModes\":[{\"id\":\"chat\",\"name\":\"Chat\"}]}}");
+        }
+
+        [Fact]
+        public async Task SessionUpdate_AvailableCommands_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendAvailableCommandsAsync(new List<AvailableCommand>
+            {
+                new() { Name = "web", Description = "Search the web", InputHint = "query" },
+                new() { Name = "clear", Description = "Clear the conversation" }
+            }, CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_CurrentMode_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendCurrentModeAsync("architect", CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_ConfigOptions_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendConfigOptionsAsync(new List<SessionConfigOption>
+            {
+                new()
+                {
+                    Type = "select",
+                    Id = "model",
+                    Name = "Model",
+                    CurrentValueId = "m1",
+                    Options = new List<SessionConfigSelectOption> { new() { Value = "m1", Name = "M1" } }
+                }
+            }, CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_SessionInfo_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendSessionInfoAsync("My session", new System.DateTimeOffset(2026, 7, 21, 0, 0, 0, System.TimeSpan.Zero), CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_Usage_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendUsageAsync(1200, 200000, new UsageCost { Amount = 0.42, Currency = "USD" }, CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_ToolCallWithDiffTerminalAndLocations_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendToolCallAsync(new ToolCall
+            {
+                Id = "tc1",
+                Name = "edit_file",
+                Kind = "edit",
+                Status = "in_progress",
+                Locations = new List<ToolCallLocation> { new() { Path = "/src/a.cs", Line = 12 } },
+                ContentItems = new List<ToolCallContent>
+                {
+                    new() { Type = "diff", Path = "/src/a.cs", OldText = "old", NewText = "new" },
+                    new() { Type = "terminal", TerminalId = "term-1" },
+                    new() { Type = "content", Text = "preview" }
+                }
+            }, CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
+        [Fact]
+        public async Task SessionUpdate_ToolCallUpdateWithRawOutput_IsSchemaValid()
+        {
+            var t = new CapturingTransport();
+            var s = new SessionUpdateStreamer(t, "s1");
+            await s.SendToolResultAsync(new ToolResult
+            {
+                CallId = "tc1",
+                Content = "done",
+                RawOutput = new { exitCode = 0 },
+                Locations = new List<ToolCallLocation> { new() { Path = "/src/a.cs" } }
+            }, CancellationToken.None);
+            AcpSchema.AssertValid("SessionNotification", ParamsOf(t.Messages[0]));
+        }
+
         private sealed class CapturingTransport : ITransport
         {
             public List<string> Messages { get; } = new();
