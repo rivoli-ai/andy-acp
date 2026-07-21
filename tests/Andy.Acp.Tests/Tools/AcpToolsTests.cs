@@ -125,7 +125,7 @@ namespace Andy.Acp.Tests.Tools
             Assert.NotNull(echoTool.InputSchema);
             Assert.Equal("object", echoTool.InputSchema.Type);
             Assert.Contains("text", echoTool.InputSchema.Properties.Keys);
-            Assert.Contains("text", echoTool.InputSchema.Required);
+            Assert.Contains("text", echoTool.InputSchema.Required!);
         }
 
         [Fact]

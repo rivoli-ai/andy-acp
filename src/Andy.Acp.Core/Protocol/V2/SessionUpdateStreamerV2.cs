@@ -131,10 +131,16 @@ namespace Andy.Acp.Core.Protocol.V2
             }, cancellationToken);
 
         public Task SendCurrentModeAsync(string modeId, CancellationToken cancellationToken)
+        {
             // v2 removed current_mode_update: modes are config options (category "mode").
-            => throw new NotSupportedException(
-                "ACP v2 has no current_mode_update; report mode changes via SendConfigOptionsAsync " +
-                "with a config option of category \"mode\".");
+            // IResponseStreamer is version-neutral, so dropping with a warning beats
+            // crashing an in-flight prompt whose agent doesn't know the wire version.
+            _logger?.LogWarning(
+                "ACP v2 has no current_mode_update; dropping mode change {ModeId}. " +
+                "Report mode changes via SendConfigOptionsAsync with a config option of category \"mode\".",
+                modeId);
+            return Task.CompletedTask;
+        }
 
         public Task SendConfigOptionsAsync(IReadOnlyList<SessionConfigOption> configOptions, CancellationToken cancellationToken)
             => SendUpdateAsync(new

@@ -11,9 +11,9 @@ using Andy.Acp.Core.JsonRpc;
 namespace Andy.Acp.Core.Protocol
 {
     /// <summary>
-    /// Handles the ACP v1 <c>initialize</c> handshake and protocol-version negotiation.
-    /// Unlike earlier revisions, this does not register <c>initialized</c> or
-    /// <c>shutdown</c> (neither is part of ACP v1), and it does not create a conversation
+    /// Handles the ACP <c>initialize</c> handshake and protocol-version negotiation for
+    /// both stable v1 and (when enabled) v2 alpha. It does not register <c>initialized</c>
+    /// or <c>shutdown</c> (neither is part of ACP), and it does not create a conversation
     /// session — that is the job of <c>session/new</c>. It records the outcome in the shared
     /// <see cref="AcpConnectionState"/> so session methods can enforce initialize-first ordering.
     /// </summary>
@@ -132,13 +132,17 @@ namespace Andy.Acp.Core.Protocol
 
         /// <summary>
         /// Applies the ACP version-negotiation rule against the configured supported set:
-        /// a supported requested version is used as-is; anything else falls back to the
-        /// highest supported version so the client can decide whether to proceed.
+        /// a supported requested version is used as-is; anything else falls back to stable
+        /// v1 when served, so alpha versions are only negotiated on an explicit client
+        /// request. (Without v1 in the set, the highest supported version is used.)
         /// </summary>
         private int NegotiateVersion(int? requested)
         {
             if (requested.HasValue && _supportedVersions.Contains(requested.Value))
                 return requested.Value;
+
+            if (_supportedVersions.Contains(AcpVersions.V1))
+                return AcpVersions.V1;
 
             return _supportedVersions.Max();
         }

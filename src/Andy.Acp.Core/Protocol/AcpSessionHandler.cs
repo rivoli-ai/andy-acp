@@ -369,7 +369,7 @@ namespace Andy.Acp.Core.Protocol
                     _logger?.LogInformation("Prompt completed for session {SessionId}, stopReason {StopReason}",
                         promptParams.SessionId, response.StopReason);
 
-                    return new { stopReason = MapStopReason(response.StopReason) };
+                    return new { stopReason = AcpStopReason.ToWire(response.StopReason) };
                 }
                 catch (OperationCanceledException)
                 {
@@ -523,16 +523,6 @@ namespace Andy.Acp.Core.Protocol
             var json = JsonSerializer.Serialize(parameters, JsonRpcSerializer.Options);
             return JsonSerializer.Deserialize<T>(json, JsonRpcSerializer.Options);
         }
-
-        private static string MapStopReason(StopReason stopReason) => stopReason switch
-        {
-            StopReason.Completed => "end_turn",
-            StopReason.Cancelled => "cancelled",
-            StopReason.TokenLimit => "max_tokens",
-            StopReason.Error => "refusal",
-            StopReason.TimeLimit => "max_tokens",
-            _ => "end_turn"
-        };
 
         private class NewSessionRequest
         {

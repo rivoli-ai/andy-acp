@@ -1,5 +1,14 @@
 # ACP Protocol Implementation Plan for Andy.Acp.Core
 
+> **⚠️ SUPERSEDED — historical document.** This plan describes the original
+> pre-v1 architecture and is kept for history only. The implementation has
+> since been reworked for stable ACP v1 (plus opt-in v2 alpha): `initialized`
+> and `shutdown` were never part of ACP and were removed, and filesystem /
+> terminal are agent → client requests (`AcpClient` in `src/Andy.Acp.Core/Client/`)
+> rather than the inbound `IFileSystemProvider` / `ITerminalProvider` /
+> `AcpFileSystemHandler` / `AcpTerminalHandler` design planned below.
+> See `README.md` for the current architecture.
+
 ## Goal
 Implement the complete Agent Client Protocol (ACP) in Andy.Acp.Core as a general-purpose library that any agent can use to integrate with ACP-compatible editors like Zed.
 

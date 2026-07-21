@@ -75,7 +75,7 @@ namespace Andy.Acp.Core.Transport
             _inputStream = inputStream ?? throw new ArgumentNullException(nameof(inputStream));
             _outputStream = outputStream ?? throw new ArgumentNullException(nameof(outputStream));
             _ownsStreams = false;
-            _lineTerminator = "\r\n";
+            _lineTerminator = "\n";
             _maxMessageSize = maxMessageSize;
 
             _logger?.LogDebug("StdioTransport initialized (byte framing)");
