@@ -100,11 +100,11 @@ namespace Andy.Acp.Core.JsonRpc
 
                 if (!request.IsNotification)
                 {
+                    // Return a safe generic internal error to the client; the full
+                    // exception is already captured in the server-side log above.
                     var errorResponse = JsonRpcSerializer.CreateErrorResponse(
                         request,
-                        JsonRpcErrorCodes.InternalError,
-                        ex.Message,
-                        _logger?.IsEnabled(LogLevel.Debug) == true ? ex.ToString() : null
+                        JsonRpcErrorCodes.InternalError
                     );
 
                     eventArgs.Response = errorResponse;
@@ -221,7 +221,8 @@ namespace Andy.Acp.Core.JsonRpc
             catch (JsonRpcProtocolException ex)
             {
                 _logger?.LogWarning(ex, "Protocol error in method: {Method}", request.Method);
-                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.Data);
+                // ErrorData (not Exception.Data) is what belongs in error.data.
+                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.ErrorData);
             }
             catch (ArgumentException ex)
             {
@@ -230,8 +231,10 @@ namespace Andy.Acp.Core.JsonRpc
             }
             catch (Exception ex)
             {
+                // Log full detail server-side but never leak internal exception
+                // messages or stack traces to the client.
                 _logger?.LogError(ex, "Method execution failed: {Method}", request.Method);
-                return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.InternalError, ex.Message);
+                return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.InternalError);
             }
         }
 
@@ -250,7 +253,8 @@ namespace Andy.Acp.Core.JsonRpc
             catch (JsonRpcProtocolException ex)
             {
                 _logger?.LogWarning(ex, "Protocol error in method: {Method}", request.Method);
-                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.Data);
+                // ErrorData (not Exception.Data) is what belongs in error.data.
+                return JsonRpcSerializer.CreateErrorResponse(request, ex.ErrorCode, ex.Message, ex.ErrorData);
             }
             catch (ArgumentException ex)
             {
@@ -259,8 +263,10 @@ namespace Andy.Acp.Core.JsonRpc
             }
             catch (Exception ex)
             {
+                // Log full detail server-side but never leak internal exception
+                // messages or stack traces to the client.
                 _logger?.LogError(ex, "Method execution failed: {Method}", request.Method);
-                return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.InternalError, ex.Message);
+                return JsonRpcSerializer.CreateErrorResponse(request, JsonRpcErrorCodes.InternalError);
             }
         }
     }

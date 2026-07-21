@@ -122,7 +122,8 @@ namespace Andy.Acp.Tests.JsonRpc
         public void Deserialize_ValidNotification_ReturnsNotification()
         {
             // Arrange
-            var json = """{"jsonrpc":"2.0","method":"notify","params":"test"}""";
+            // params must be a structured value (object or array) per JSON-RPC 2.0.
+            var json = """{"jsonrpc":"2.0","method":"notify","params":{"value":"test"}}""";
 
             // Act
             var message = JsonRpcSerializer.Deserialize(json);
@@ -147,7 +148,7 @@ namespace Andy.Acp.Tests.JsonRpc
             // Assert
             Assert.IsType<JsonRpcResponse>(message);
             var response = (JsonRpcResponse)message;
-            Assert.Equal("test", ((JsonElement)response.Id!).GetString());
+            Assert.Equal("test", response.Id);
             Assert.True(response.IsSuccess);
             Assert.False(response.IsError);
         }

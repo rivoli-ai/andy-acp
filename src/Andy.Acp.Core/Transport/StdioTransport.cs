@@ -8,99 +8,120 @@ using Microsoft.Extensions.Logging;
 namespace Andy.Acp.Core.Transport
 {
     /// <summary>
-    /// Transport implementation using standard input/output streams
+    /// The line/message framing used on a stdio connection.
+    /// </summary>
+    public enum StdioFramingMode
+    {
+        /// <summary>Newline-delimited JSON (Zed/Gemini style).</summary>
+        LineDelimited,
+
+        /// <summary>Content-Length header framing (LSP/MCP style).</summary>
+        ContentLength
+    }
+
+    /// <summary>
+    /// Transport implementation using standard input/output streams.
+    /// Framing is performed at the byte-stream layer so that raw UTF-8 payloads
+    /// round-trip exactly under Content-Length framing, and responses are written
+    /// using the same framing mode that was detected on input.
     /// </summary>
     public class StdioTransport : ITransport
     {
+        private const int DefaultMaxMessageSize = 64 * 1024 * 1024; // 64 MiB
+        private const int MaxHeaderLineLength = 8 * 1024;           // 8 KiB per header line
+        private const int MaxHeaderCount = 100;
+
         private readonly ILogger<StdioTransport>? _logger;
         private readonly Stream _inputStream;
         private readonly Stream _outputStream;
-        private readonly StreamReader _reader;
-        private readonly StreamWriter _writer;
         private readonly SemaphoreSlim _writeSemaphore = new(1, 1);
+        private readonly bool _ownsStreams;
+        private readonly string _lineTerminator;
+        private readonly long _maxMessageSize;
+
+        private readonly byte[] _buffer = new byte[8192];
+        private int _bufferPos;
+        private int _bufferLen;
+
+        // Framing mode used for outbound writes. Starts as line-delimited and is
+        // updated to match whatever framing is detected on the first inbound message.
+        private StdioFramingMode _framingMode = StdioFramingMode.LineDelimited;
+
+        private volatile bool _closed;
         private bool _disposed;
 
         /// <summary>
-        /// Initializes a new instance of the StdioTransport class with optional logger
+        /// Initializes a new instance using the process standard input/output streams.
         /// </summary>
-        /// <param name="logger">Optional logger instance</param>
-        public StdioTransport(ILogger<StdioTransport>? logger = null)
+        public StdioTransport(ILogger<StdioTransport>? logger = null, long maxMessageSize = DefaultMaxMessageSize)
         {
             _logger = logger;
-
-            // Use the raw stdin/stdout streams
             _inputStream = Console.OpenStandardInput();
             _outputStream = Console.OpenStandardOutput();
+            _ownsStreams = true;
+            _lineTerminator = "\n";
+            _maxMessageSize = maxMessageSize;
 
-            // Create our own readers/writers with explicit settings
-            _reader = new StreamReader(_inputStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
-            _writer = new StreamWriter(_outputStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), bufferSize: 1024, leaveOpen: true)
-            {
-                AutoFlush = true,
-                NewLine = "\n" // Use LF only, not CRLF
-            };
-
-            _logger?.LogDebug("StdioTransport initialized using stdin/stdout with custom readers");
+            _logger?.LogDebug("StdioTransport initialized using stdin/stdout (byte framing)");
         }
 
         /// <summary>
-        /// Initializes a new instance of the StdioTransport class with custom streams
+        /// Initializes a new instance using caller-provided streams. The caller retains
+        /// ownership of the streams and is responsible for disposing them.
         /// </summary>
-        /// <param name="inputStream">Input stream</param>
-        /// <param name="outputStream">Output stream</param>
-        /// <param name="logger">Optional logger instance</param>
-        public StdioTransport(Stream inputStream, Stream outputStream, ILogger<StdioTransport>? logger = null)
+        public StdioTransport(Stream inputStream, Stream outputStream, ILogger<StdioTransport>? logger = null, long maxMessageSize = DefaultMaxMessageSize)
         {
             _logger = logger;
             _inputStream = inputStream ?? throw new ArgumentNullException(nameof(inputStream));
             _outputStream = outputStream ?? throw new ArgumentNullException(nameof(outputStream));
+            _ownsStreams = false;
+            _lineTerminator = "\r\n";
+            _maxMessageSize = maxMessageSize;
 
-            _reader = new StreamReader(_inputStream, Encoding.UTF8);
-            _writer = new StreamWriter(_outputStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
-            {
-                AutoFlush = true,
-                NewLine = "\r\n" // Use CRLF for protocol compatibility
-            };
-
-            _logger?.LogDebug("StdioTransport initialized");
+            _logger?.LogDebug("StdioTransport initialized (byte framing)");
         }
 
+        /// <summary>
+        /// The framing mode currently used for outbound writes.
+        /// </summary>
+        public StdioFramingMode FramingMode => _framingMode;
+
         /// <inheritdoc />
-        public bool IsConnected => !_disposed && _inputStream.CanRead && _outputStream.CanWrite;
+        public bool IsConnected => !_disposed && !_closed && _inputStream.CanRead && _outputStream.CanWrite;
 
         /// <inheritdoc />
         public async Task<string> ReadMessageAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
-                _logger?.LogTrace("Reading message from stdin");
+                // Read the first line. In line-delimited mode this is the whole message,
+                // so allow it to grow up to the maximum message size.
+                var firstLineBytes = await ReadLineBytesAsync(_maxMessageSize, cancellationToken).ConfigureAwait(false);
+                if (firstLineBytes == null)
+                    throw new EndOfStreamException("End of input stream");
 
-                // Read first line to detect format
-                string firstLine = await ReadLineAsync(cancellationToken);
+                var firstLine = Encoding.UTF8.GetString(firstLineBytes);
 
                 if (string.IsNullOrEmpty(firstLine))
-                {
                     throw new InvalidOperationException("Unexpected empty first line");
-                }
 
-                // Check if it's Content-Length header or line-delimited JSON
                 if (firstLine.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Content-Length header format (LSP/MCP style)
-                    return await ReadContentLengthMessageAsync(firstLine, cancellationToken);
+                    _framingMode = StdioFramingMode.ContentLength;
+                    return await ReadContentLengthMessageAsync(firstLine, cancellationToken).ConfigureAwait(false);
                 }
-                else if (firstLine.TrimStart().StartsWith("{"))
+
+                if (firstLine.TrimStart().StartsWith("{") || firstLine.TrimStart().StartsWith("["))
                 {
-                    // Line-delimited JSON format (Zed/Gemini style)
-                    _logger?.LogTrace("Detected line-delimited JSON format");
+                    _framingMode = StdioFramingMode.LineDelimited;
+                    _logger?.LogTrace("Detected line-delimited JSON message");
                     return firstLine.Trim();
                 }
-                else
-                {
-                    throw new InvalidOperationException($"Unexpected message format. Line: {firstLine}");
-                }
+
+                throw new InvalidOperationException($"Unexpected message framing. Line: {firstLine}");
             }
             catch (OperationCanceledException)
             {
@@ -113,65 +134,48 @@ namespace Andy.Acp.Core.Transport
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error reading message from stdin");
+                _logger?.LogError(ex, "Error reading message from input");
                 throw;
             }
         }
 
-        /// <summary>
-        /// Reads a message using Content-Length header format
-        /// </summary>
         private async Task<string> ReadContentLengthMessageAsync(string firstLine, CancellationToken cancellationToken)
         {
-            int contentLength = -1;
-            string headerLine = firstLine;
+            int contentLength = ParseContentLength(firstLine);
 
-            // Parse Content-Length header
-            if (headerLine.StartsWith("Content-Length: ", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!int.TryParse(headerLine.Substring(16), out contentLength) || contentLength < 0)
-                {
-                    throw new InvalidOperationException($"Invalid Content-Length value: {headerLine}");
-                }
-            }
-
-            // Read remaining headers until empty line
+            // Consume remaining headers until the blank line that separates headers from body.
+            int headerCount = 0;
             while (true)
             {
-                headerLine = await ReadLineAsync(cancellationToken);
+                var headerBytes = await ReadLineBytesAsync(MaxHeaderLineLength, cancellationToken).ConfigureAwait(false);
+                if (headerBytes == null)
+                    throw new EndOfStreamException("Unexpected end of stream while reading headers");
 
-                if (string.IsNullOrEmpty(headerLine))
-                {
-                    // Empty line indicates end of headers
-                    if (contentLength == -1)
-                    {
-                        throw new InvalidOperationException("Missing Content-Length header");
-                    }
-                    break;
-                }
+                if (headerBytes.Length == 0)
+                    break; // blank line -> end of headers
 
-                // Process other headers if needed
+                if (++headerCount > MaxHeaderCount)
+                    throw new InvalidOperationException("Too many headers");
             }
 
-            // Read message content
-            char[] buffer = new char[contentLength];
-            int totalRead = 0;
+            var body = await ReadExactBytesAsync(contentLength, cancellationToken).ConfigureAwait(false);
+            _logger?.LogTrace("Read Content-Length message of {Length} bytes", contentLength);
+            return Encoding.UTF8.GetString(body);
+        }
 
-            while (totalRead < contentLength)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                int bytesRead = await _reader.ReadAsync(buffer, totalRead, contentLength - totalRead);
-                if (bytesRead == 0)
-                {
-                    throw new InvalidOperationException("Unexpected end of stream while reading message content");
-                }
-                totalRead += bytesRead;
-            }
+        private int ParseContentLength(string headerLine)
+        {
+            int colon = headerLine.IndexOf(':');
+            var value = colon >= 0 ? headerLine.Substring(colon + 1).Trim() : string.Empty;
 
-            string message = new string(buffer);
-            _logger?.LogTrace("Successfully read Content-Length message of {Length} characters", contentLength);
+            if (!int.TryParse(value, out int contentLength) || contentLength < 0)
+                throw new InvalidOperationException($"Invalid Content-Length value: {headerLine}");
 
-            return message;
+            if (contentLength > _maxMessageSize)
+                throw new InvalidOperationException(
+                    $"Content-Length {contentLength} exceeds maximum message size {_maxMessageSize}");
+
+            return contentLength;
         }
 
         /// <inheritdoc />
@@ -184,22 +188,37 @@ namespace Andy.Acp.Core.Transport
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            await _writeSemaphore.WaitAsync(cancellationToken);
+            await _writeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger?.LogTrace("Writing message to stdout with {Length} characters", message.Length);
+                var payload = Encoding.UTF8.GetBytes(message);
+                byte[] frame;
 
-                // Write line-delimited JSON (simpler format, compatible with Zed/Gemini)
-                await _writer.WriteLineAsync(message);
-                await _writer.FlushAsync();
+                if (_framingMode == StdioFramingMode.ContentLength)
+                {
+                    var header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
+                    frame = new byte[header.Length + payload.Length];
+                    Buffer.BlockCopy(header, 0, frame, 0, header.Length);
+                    Buffer.BlockCopy(payload, 0, frame, header.Length, payload.Length);
+                }
+                else
+                {
+                    var terminator = Encoding.ASCII.GetBytes(_lineTerminator);
+                    frame = new byte[payload.Length + terminator.Length];
+                    Buffer.BlockCopy(payload, 0, frame, 0, payload.Length);
+                    Buffer.BlockCopy(terminator, 0, frame, payload.Length, terminator.Length);
+                }
 
-                _logger?.LogTrace("Successfully wrote message");
+                await _outputStream.WriteAsync(frame.AsMemory(0, frame.Length), cancellationToken).ConfigureAwait(false);
+                await _outputStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+                _logger?.LogTrace("Wrote message ({Length} bytes, {Mode})", payload.Length, _framingMode);
             }
             catch (Exception ex) when (!(ex is OperationCanceledException))
             {
-                _logger?.LogError(ex, "Error writing message to stdout");
+                _logger?.LogError(ex, "Error writing message to output");
                 throw;
             }
             finally
@@ -211,18 +230,15 @@ namespace Andy.Acp.Core.Transport
         /// <inheritdoc />
         public async Task CloseAsync(CancellationToken cancellationToken = default)
         {
-            if (_disposed)
+            if (_closed || _disposed)
                 return;
 
+            _closed = true;
             try
             {
                 _logger?.LogDebug("Closing StdioTransport");
-
-                await _writer.FlushAsync();
-                _writer.Close();
-                _reader.Close();
-
-                _logger?.LogDebug("StdioTransport closed successfully");
+                // Flush any buffered output. Cleanup must not itself be cancelled.
+                await _outputStream.FlushAsync(CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -231,66 +247,82 @@ namespace Andy.Acp.Core.Transport
         }
 
         /// <summary>
-        /// Reads a line from the input stream asynchronously
+        /// Reads one line of raw bytes terminated by <c>\n</c>. A single preceding
+        /// <c>\r</c> is stripped. Returns an empty array for a blank line and
+        /// <c>null</c> at end of stream (with no partial data buffered).
         /// </summary>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The line read from the stream</returns>
-        private async Task<string> ReadLineAsync(CancellationToken cancellationToken)
+        private async Task<byte[]?> ReadLineBytesAsync(long maxLength, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Use standard ReadLineAsync for better compatibility with piped stdin
-            var line = await _reader.ReadLineAsync();
-
-            if (line == null)
+            using var ms = new MemoryStream();
+            while (true)
             {
-                throw new EndOfStreamException("Unexpected end of stream");
-            }
-
-            return line;
-        }
-
-        /// <summary>
-        /// Reads a single character from the input stream asynchronously
-        /// </summary>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The character read, or -1 if end of stream</returns>
-        private async Task<int> ReadCharAsync(CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // For console stdin, we need to use a different approach since ReadAsync doesn't respect cancellation
-            var buffer = new char[1];
-            var readTask = _reader.ReadAsync(buffer, 0, 1);
-
-            // Create a delay task that completes when cancelled
-            var delayTask = Task.Delay(100, cancellationToken);
-
-            while (!readTask.IsCompleted)
-            {
-                var completedTask = await Task.WhenAny(readTask, delayTask);
-
-                if (completedTask == delayTask)
+                int b = await ReadRawByteAsync(cancellationToken).ConfigureAwait(false);
+                if (b < 0)
                 {
-                    // Cancellation was requested
-                    cancellationToken.ThrowIfCancellationRequested();
-                    // Create a new delay task for the next iteration
-                    delayTask = Task.Delay(100, cancellationToken);
+                    if (ms.Length == 0)
+                        return null; // clean EOF at a message boundary
+                    break;           // trailing line without newline
                 }
-                else
-                {
-                    // Read task completed
+
+                if (b == '\n')
                     break;
-                }
+
+                ms.WriteByte((byte)b);
+                if (ms.Length > maxLength)
+                    throw new InvalidOperationException($"Line exceeds maximum length of {maxLength} bytes");
             }
 
-            int result = await readTask;
-            return result == 0 ? -1 : buffer[0];
+            var arr = ms.ToArray();
+            int len = arr.Length;
+            if (len > 0 && arr[len - 1] == (byte)'\r')
+            {
+                Array.Resize(ref arr, len - 1);
+            }
+            return arr;
         }
 
         /// <summary>
-        /// Throws ObjectDisposedException if the transport has been disposed
+        /// Reads exactly <paramref name="count"/> bytes, draining the internal buffer
+        /// first and then reading from the underlying stream.
         /// </summary>
+        private async Task<byte[]> ReadExactBytesAsync(int count, CancellationToken cancellationToken)
+        {
+            var result = new byte[count];
+            int filled = 0;
+
+            while (filled < count && _bufferPos < _bufferLen)
+                result[filled++] = _buffer[_bufferPos++];
+
+            while (filled < count)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int n = await _inputStream.ReadAsync(result.AsMemory(filled, count - filled), cancellationToken).ConfigureAwait(false);
+                if (n == 0)
+                    throw new EndOfStreamException("Unexpected end of stream while reading message content");
+                filled += n;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Reads a single byte from the buffered input, refilling from the underlying
+        /// stream as needed. The read observes the cancellation token so an idle read
+        /// can be aborted within a bounded time.
+        /// </summary>
+        private async ValueTask<int> ReadRawByteAsync(CancellationToken cancellationToken)
+        {
+            if (_bufferPos >= _bufferLen)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _bufferLen = await _inputStream.ReadAsync(_buffer.AsMemory(0, _buffer.Length), cancellationToken).ConfigureAwait(false);
+                _bufferPos = 0;
+                if (_bufferLen == 0)
+                    return -1;
+            }
+            return _buffer[_bufferPos++];
+        }
+
         private void ThrowIfDisposed()
         {
             if (_disposed)
@@ -304,35 +336,32 @@ namespace Andy.Acp.Core.Transport
             GC.SuppressFinalize(this);
         }
 
-        /// <summary>
-        /// Disposes the transport resources
-        /// </summary>
-        /// <param name="disposing">True if disposing managed resources</param>
         protected virtual void Dispose(bool disposing)
         {
-            if (!_disposed && disposing)
+            if (_disposed || !disposing)
+                return;
+
+            _logger?.LogDebug("Disposing StdioTransport");
+            _closed = true;
+
+            try
             {
-                _logger?.LogDebug("Disposing StdioTransport");
+                _writeSemaphore.Dispose();
 
-                try
+                // Only dispose streams we opened ourselves; caller-provided streams
+                // remain the caller's responsibility.
+                if (_ownsStreams)
                 {
-                    _writeSemaphore?.Dispose();
-                    _writer?.Dispose();
-                    _reader?.Dispose();
-
-                    // Only dispose streams if we don't own the standard streams
-                    if (_inputStream != Console.OpenStandardInput())
-                        _inputStream?.Dispose();
-                    if (_outputStream != Console.OpenStandardOutput())
-                        _outputStream?.Dispose();
+                    _inputStream.Dispose();
+                    _outputStream.Dispose();
                 }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "Error occurred while disposing StdioTransport");
-                }
-
-                _disposed = true;
             }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Error occurred while disposing StdioTransport");
+            }
+
+            _disposed = true;
         }
     }
 }
