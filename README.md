@@ -34,7 +34,7 @@ andy-acp/
 │       ├── Server/                 # Unified ACP server
 │       └── Tools/                  # Tool framework (MCP compatibility)
 ├── tests/
-│   └── Andy.Acp.Tests/             # Comprehensive unit tests (303 tests)
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (334 tests)
 │       ├── Transport/
 │       ├── JsonRpc/
 │       ├── Session/
@@ -155,7 +155,7 @@ andy-acp/
 - **Response streaming** working (word-by-word display in Zed)
 - **Session management** properly tracking conversation state
 
-**Total: 303 tests passing** (including schema-backed ACP v1 validation and end-to-end stdio flows)
+**Total: 334 tests passing** (including schema-backed ACP v1 validation and end-to-end stdio flows)
 
 ## Supported ACP version and capabilities
 

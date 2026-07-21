@@ -89,17 +89,19 @@ echo '{"jsonrpc":"2.0","method":"tools/list","id":1,"params":{}}' | dotnet run -
 The following should happen automatically (check server stderr logs):
 
 - [ ] Zed sends `initialize` request
-- [ ] Server responds with capabilities (tools, resources, logging)
-- [ ] Zed sends `initialized` notification
+- [ ] Server responds with ACP agent capabilities
+- [ ] Zed sends `session/new` request and the server creates a session
 - [ ] Session becomes active
 - [ ] No JSON-RPC errors reported
+
+> **Note:** ACP has no `initialized` notification or `shutdown` method (they were
+> never part of the ACP spec and are not implemented).
 
 **Expected stderr logs:**
 ```
 [SERVER] Processing JSON-RPC request: initialize (ID: 1)
+[SERVER] Processing JSON-RPC request: session/new (ID: 2)
 [SERVER] Created new session: {session-id}
-[SERVER] Processing JSON-RPC request: initialized
-[SERVER] Session {session-id} is now active
 ```
 
 ### 3. Tool Discovery
@@ -328,26 +330,18 @@ echo 'invalid json' | dotnet run -- --server
 - [ ] Session timeout is set (default: 30 minutes)
 - [ ] Pending requests are tracked
 
-#### Graceful Shutdown
+#### Connection Close
 
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "shutdown",
-  "id": 9,
-  "params": {
-    "reason": "Testing complete"
-  }
-}
-```
+ACP has no `shutdown` method. The server exits when the client closes the
+connection (stdin reaches end-of-stream).
 
 **Expected behavior:**
-- [ ] Server waits up to 5 seconds for pending requests
-- [ ] All pending requests complete or timeout
-- [ ] Session transitions to terminated state
-- [ ] Success response returned
-- [ ] Connection closes cleanly
+- [ ] In-flight handlers get up to 5 seconds to flush final updates/responses
+- [ ] Pending agent-to-client requests are failed with a disconnect error
+- [ ] The transport is closed and the process exits cleanly
+
+Test manually by closing Zed (or sending EOF to the server's stdin) and
+checking the stderr logs for a clean stop.
 
 ### 7. Performance Metrics
 
@@ -396,7 +390,8 @@ done
 
 ### Issue: "Session timeout"
 **Solution:**
-- Ensure `initialized` notification is sent after `initialize`
+- Ensure `initialize` completed successfully before any `session/*` method
+  (session methods fail with a not-initialized error otherwise)
 - Check session state in server logs
 - Verify session timeout setting (default: 30 minutes)
 
@@ -419,7 +414,7 @@ done
 3. **Discovery**: Check Zed can see all 4 tools
 4. **Execution**: Test each tool at least once
 5. **Errors**: Test at least one error condition
-6. **Shutdown**: Close Zed and verify graceful shutdown
+6. **Disconnect**: Close Zed and verify the server exits cleanly on connection close
 
 ## Automated Testing
 

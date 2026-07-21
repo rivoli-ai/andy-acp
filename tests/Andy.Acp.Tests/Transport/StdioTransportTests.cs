@@ -113,8 +113,9 @@ namespace Andy.Acp.Tests.Transport
             // Assert
             var output = _streamProvider.GetOutputData();
             var json = JsonSerializer.Serialize(testMessage);
-            // StdioTransport now uses line-delimited JSON format (not Content-Length headers)
-            var expectedOutput = $"{json}\r\n";
+            // StdioTransport uses line-delimited JSON with a \n terminator (not
+            // Content-Length headers), identical across both constructors.
+            var expectedOutput = $"{json}\n";
             Assert.Equal(expectedOutput, output);
         }
 

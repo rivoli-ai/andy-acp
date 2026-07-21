@@ -41,8 +41,9 @@ namespace Andy.Acp.Tests.Protocol.V2
         [InlineData(false, 1, 1)] // v1-only server, v1 request -> v1
         [InlineData(false, 2, 1)] // v1-only server, v2 request -> negotiated down to v1
         [InlineData(true, 1, 1)]  // v1+v2 server, v1 request -> v1
-        [InlineData(true, 2, 2)]  // v1+v2 server, v2 request -> v2
-        [InlineData(true, 99, 2)] // unsupported request -> highest supported
+        [InlineData(true, 2, 2)]  // v1+v2 server, explicit v2 request -> v2
+        [InlineData(true, 99, 1)] // unsupported request -> stable fallback, not alpha
+        [InlineData(true, 0, 1)]  // unsupported low request -> stable fallback, not alpha
         public async Task Negotiation_Matrix(bool v2Enabled, int requested, int expected)
         {
             var (handler, state) = Handler(v2Enabled);
@@ -312,11 +313,13 @@ namespace Andy.Acp.Tests.Protocol.V2
         }
 
         [Fact]
-        public async Task V2Streamer_CurrentMode_IsNotSupported()
+        public async Task V2Streamer_CurrentMode_IsDroppedWithoutThrowing()
         {
-            var (streamer, _) = V2Streamer();
-            await Assert.ThrowsAsync<NotSupportedException>(
-                () => streamer.SendCurrentModeAsync("chat", CancellationToken.None));
+            // v2 has no current_mode_update; the version-neutral streamer API must not
+            // crash an in-flight prompt — the update is dropped (with a log warning).
+            var (streamer, transport) = V2Streamer();
+            await streamer.SendCurrentModeAsync("chat", CancellationToken.None);
+            Assert.Empty(transport.Messages);
         }
 
         private static (SessionUpdateStreamerV2 streamer, CapturingTransport transport) V2Streamer()

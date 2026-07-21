@@ -156,8 +156,8 @@ namespace Andy.Acp.Core.Session
                 // Set initial context
                 if (capabilities.ClientInfo != null)
                 {
-                    SetContextValue("client.name", capabilities.ClientInfo.Name);
-                    SetContextValue("client.version", capabilities.ClientInfo.Version);
+                    SetContextValue("client.name", capabilities.ClientInfo.Name ?? string.Empty);
+                    SetContextValue("client.version", capabilities.ClientInfo.Version ?? string.Empty);
                 }
 
                 State = SessionState.Initialized;

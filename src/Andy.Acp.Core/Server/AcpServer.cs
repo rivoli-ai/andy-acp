@@ -262,6 +262,29 @@ namespace Andy.Acp.Core.Server
                             _logger?.LogInformation("Input stream closed");
                             break;
                         }
+                        catch (InvalidOperationException ex)
+                        {
+                            // Recoverable framing error (e.g. a garbage line): the bad
+                            // frame was consumed, so report it as a JSON-RPC parse error
+                            // and keep serving subsequent messages instead of killing
+                            // the whole connection.
+                            _logger?.LogWarning(ex, "Skipping malformed message frame");
+                            try
+                            {
+                                var errorJson = JsonRpcSerializer.Serialize(
+                                    JsonRpcSerializer.CreateErrorResponse(
+                                        requestId: null,
+                                        JsonRpcErrorCodes.CreateError(
+                                            JsonRpcErrorCodes.ParseError,
+                                            "Malformed message frame")));
+                                await transport.WriteMessageAsync(errorJson, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (Exception writeEx)
+                            {
+                                _logger?.LogWarning(writeEx, "Failed to report framing error; continuing");
+                            }
+                            continue;
+                        }
                         catch (Exception ex)
                         {
                             _logger?.LogError(ex, "Error reading message; stopping read loop");
@@ -368,12 +391,13 @@ namespace Andy.Acp.Core.Server
                     if (request.Method == "$/cancel_request")
                     {
                         // ACP protocol-level cancellation: cancel the in-flight request with
-                        // the given id. This is a notification; no response is sent.
+                        // the given id. Defined as a notification; when a client still sends
+                        // it with an id, answer with an empty success so it is not left hanging.
                         HandleCancelRequest(request);
-                        return;
+                        if (!request.IsNotification)
+                            response = JsonRpcSerializer.CreateSuccessResponse(request);
                     }
-
-                    if (!request.IsNotification)
+                    else if (!request.IsNotification)
                     {
                         // Track cancellable in-flight requests by canonical id.
                         var key = CanonicalId(request.Id);

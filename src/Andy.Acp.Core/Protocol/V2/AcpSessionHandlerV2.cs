@@ -295,7 +295,7 @@ namespace Andy.Acp.Core.Protocol.V2
                 {
                     var response = await _agentProvider.ProcessPromptAsync(
                         req.SessionId, message, streamer, promptCts.Token);
-                    stopReason = MapStopReason(response.StopReason);
+                    stopReason = AcpStopReason.ToWire(response.StopReason);
                 }
                 catch (OperationCanceledException)
                 {
@@ -401,16 +401,6 @@ namespace Andy.Acp.Core.Protocol.V2
             var json = JsonSerializer.Serialize(parameters, JsonRpcSerializer.Options);
             return JsonSerializer.Deserialize<T>(json, JsonRpcSerializer.Options);
         }
-
-        private static string MapStopReason(StopReason stopReason) => stopReason switch
-        {
-            StopReason.Completed => "end_turn",
-            StopReason.Cancelled => "cancelled",
-            StopReason.TokenLimit => "max_tokens",
-            StopReason.Error => "refusal",
-            StopReason.TimeLimit => "max_tokens",
-            _ => "end_turn"
-        };
 
         private class NewSessionRequestV2
         {
