@@ -17,8 +17,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Pinned stable ACP v1 JSON Schema, vendored for conformance tests. -->
+    <!-- Pinned ACP JSON Schemas, vendored for conformance tests:
+         v1 = stable schema-v1.20.0; v2 = alpha schema-v2.0.0-alpha.x. -->
     <None Include="Schema\acp-v1-schema.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Schema\acp-v2-schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
