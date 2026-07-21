@@ -54,6 +54,58 @@ namespace Andy.Acp.Core.Agent
         /// <param name="plan">The execution plan</param>
         /// <param name="cancellationToken">Cancellation token</param>
         Task SendExecutionPlanAsync(ExecutionPlan plan, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Send the current set of slash-commands available in the session
+        /// (ACP <c>available_commands_update</c>).
+        /// </summary>
+        Task SendAvailableCommandsAsync(IReadOnlyList<AvailableCommand> commands, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Notify the client that the session's current mode changed
+        /// (ACP <c>current_mode_update</c>).
+        /// </summary>
+        Task SendCurrentModeAsync(string modeId, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Notify the client that the session's config options changed
+        /// (ACP <c>config_option_update</c>).
+        /// </summary>
+        Task SendConfigOptionsAsync(IReadOnlyList<SessionConfigOption> configOptions, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Send updated session info such as a generated title
+        /// (ACP <c>session_info_update</c>).
+        /// </summary>
+        Task SendSessionInfoAsync(string? title, System.DateTimeOffset? updatedAt, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Send context-window usage (ACP <c>usage_update</c>): <paramref name="used"/>
+        /// tokens consumed out of a window of <paramref name="size"/>.
+        /// </summary>
+        Task SendUsageAsync(long used, long size, UsageCost? cost, CancellationToken cancellationToken);
+    }
+
+    /// <summary>A slash-command the session currently offers (ACP <c>AvailableCommand</c>).</summary>
+    public class AvailableCommand
+    {
+        /// <summary>Command name (e.g. "web", without the leading slash).</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>Human-readable description.</summary>
+        public string Description { get; set; } = string.Empty;
+
+        /// <summary>Optional hint describing the free-form input the command accepts.</summary>
+        public string? InputHint { get; set; }
+    }
+
+    /// <summary>Monetary cost carried by a usage update (ACP <c>Cost</c>).</summary>
+    public class UsageCost
+    {
+        public double Amount { get; set; }
+
+        /// <summary>ISO 4217 currency code (e.g. "USD").</summary>
+        public string Currency { get; set; } = "USD";
     }
 
     /// <summary>
@@ -91,6 +143,60 @@ namespace Andy.Acp.Core.Agent
         /// Raw input parameters for the tool (ACP <c>rawInput</c>).
         /// </summary>
         public object? Input { get; set; }
+
+        /// <summary>
+        /// File locations this tool call affects (ACP <c>locations</c>), enabling
+        /// follow-along in the client.
+        /// </summary>
+        public List<ToolCallLocation>? Locations { get; set; }
+
+        /// <summary>
+        /// Structured content produced or previewed by the call (ACP <c>content</c>).
+        /// </summary>
+        public List<ToolCallContent>? ContentItems { get; set; }
+    }
+
+    /// <summary>A file location a tool call affects (ACP <c>ToolCallLocation</c>).</summary>
+    public class ToolCallLocation
+    {
+        /// <summary>Absolute file path.</summary>
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>Optional 1-based line number.</summary>
+        public int? Line { get; set; }
+    }
+
+    /// <summary>
+    /// Content attached to a tool call or tool result (ACP <c>ToolCallContent</c>).
+    /// <see cref="Type"/> selects the variant:
+    /// <list type="bullet">
+    /// <item><c>content</c>: <see cref="Text"/> (or a full <see cref="Content"/> block)</item>
+    /// <item><c>diff</c>: <see cref="Path"/>, <see cref="NewText"/>, optional <see cref="OldText"/></item>
+    /// <item><c>terminal</c>: <see cref="TerminalId"/></item>
+    /// </list>
+    /// </summary>
+    public class ToolCallContent
+    {
+        /// <summary>Variant discriminator: content, diff, or terminal.</summary>
+        public string Type { get; set; } = "content";
+
+        /// <summary>Text convenience for the content variant.</summary>
+        public string? Text { get; set; }
+
+        /// <summary>Full content block for the content variant (overrides <see cref="Text"/>).</summary>
+        public ContentBlock? Content { get; set; }
+
+        /// <summary>Absolute file path (diff variant).</summary>
+        public string? Path { get; set; }
+
+        /// <summary>Original file text (diff variant; null for a new file).</summary>
+        public string? OldText { get; set; }
+
+        /// <summary>Replacement file text (diff variant).</summary>
+        public string? NewText { get; set; }
+
+        /// <summary>Terminal id (terminal variant), from a client-created terminal.</summary>
+        public string? TerminalId { get; set; }
     }
 
     /// <summary>
@@ -112,6 +218,18 @@ namespace Andy.Acp.Core.Agent
         /// The tool's output or error message
         /// </summary>
         public string? Content { get; set; }
+
+        /// <summary>
+        /// Structured content for the update (ACP <c>content</c>). When set, takes
+        /// precedence over the plain <see cref="Content"/> text.
+        /// </summary>
+        public List<ToolCallContent>? ContentItems { get; set; }
+
+        /// <summary>Raw tool output (ACP <c>rawOutput</c>).</summary>
+        public object? RawOutput { get; set; }
+
+        /// <summary>Updated file locations for the call (ACP <c>locations</c>).</summary>
+        public List<ToolCallLocation>? Locations { get; set; }
     }
 
     /// <summary>

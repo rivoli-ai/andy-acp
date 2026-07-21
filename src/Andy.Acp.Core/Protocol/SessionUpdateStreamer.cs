@@ -77,25 +77,32 @@ namespace Andy.Acp.Core.Protocol
                 title = string.IsNullOrEmpty(toolCall.Title) ? toolCall.Name : toolCall.Title,
                 kind = string.IsNullOrEmpty(toolCall.Kind) ? "other" : toolCall.Kind,
                 status = string.IsNullOrEmpty(toolCall.Status) ? "pending" : toolCall.Status,
-                rawInput = toolCall.Input
+                rawInput = toolCall.Input,
+                locations = MapLocations(toolCall.Locations),
+                content = MapToolContent(toolCall.ContentItems)
             }, cancellationToken);
         }
 
         public Task SendToolResultAsync(ToolResult result, CancellationToken cancellationToken)
         {
-            object? content = result.Content == null
-                ? null
-                : new object[]
+            // Structured content takes precedence; otherwise wrap the plain text.
+            object? content = MapToolContent(result.ContentItems);
+            if (content == null && result.Content != null)
+            {
+                content = new object[]
                 {
                     new { type = "content", content = new { type = "text", text = result.Content } }
                 };
+            }
 
             return SendUpdateAsync(new
             {
                 sessionUpdate = "tool_call_update",
                 toolCallId = result.CallId,
                 status = result.IsError ? "failed" : "completed",
-                content
+                content,
+                rawOutput = result.RawOutput,
+                locations = MapLocations(result.Locations)
             }, cancellationToken);
         }
 
@@ -113,6 +120,99 @@ namespace Andy.Acp.Core.Protocol
                 sessionUpdate = "plan",
                 entries
             }, cancellationToken);
+        }
+
+        public Task SendAvailableCommandsAsync(System.Collections.Generic.IReadOnlyList<AvailableCommand> commands, CancellationToken cancellationToken)
+        {
+            return SendUpdateAsync(new
+            {
+                sessionUpdate = "available_commands_update",
+                availableCommands = commands.Select(c => new
+                {
+                    name = c.Name,
+                    description = c.Description,
+                    input = c.InputHint == null ? null : new { hint = c.InputHint }
+                }).ToArray()
+            }, cancellationToken);
+        }
+
+        public Task SendCurrentModeAsync(string modeId, CancellationToken cancellationToken)
+        {
+            return SendUpdateAsync(new
+            {
+                sessionUpdate = "current_mode_update",
+                currentModeId = modeId
+            }, cancellationToken);
+        }
+
+        public Task SendConfigOptionsAsync(System.Collections.Generic.IReadOnlyList<SessionConfigOption> configOptions, CancellationToken cancellationToken)
+        {
+            return SendUpdateAsync(new
+            {
+                sessionUpdate = "config_option_update",
+                configOptions
+            }, cancellationToken);
+        }
+
+        public Task SendSessionInfoAsync(string? title, DateTimeOffset? updatedAt, CancellationToken cancellationToken)
+        {
+            return SendUpdateAsync(new
+            {
+                sessionUpdate = "session_info_update",
+                title,
+                updatedAt = updatedAt?.ToString("o")
+            }, cancellationToken);
+        }
+
+        public Task SendUsageAsync(long used, long size, UsageCost? cost, CancellationToken cancellationToken)
+        {
+            return SendUpdateAsync(new
+            {
+                sessionUpdate = "usage_update",
+                used,
+                size,
+                cost = cost == null ? null : new { amount = cost.Amount, currency = cost.Currency }
+            }, cancellationToken);
+        }
+
+        /// <summary>Maps tool-call locations to the ACP wire shape.</summary>
+        private static object? MapLocations(System.Collections.Generic.List<ToolCallLocation>? locations)
+        {
+            if (locations == null || locations.Count == 0)
+                return null;
+
+            return locations.Select(l => new { path = l.Path, line = l.Line }).ToArray();
+        }
+
+        /// <summary>
+        /// Maps <see cref="ToolCallContent"/> items to the ACP <c>ToolCallContent</c>
+        /// wire variants (content, diff, terminal).
+        /// </summary>
+        private static object? MapToolContent(System.Collections.Generic.List<ToolCallContent>? items)
+        {
+            if (items == null || items.Count == 0)
+                return null;
+
+            return items.Select<ToolCallContent, object>(item => item.Type switch
+            {
+                "diff" => new
+                {
+                    type = "diff",
+                    path = item.Path ?? string.Empty,
+                    oldText = item.OldText,
+                    newText = item.NewText ?? string.Empty
+                },
+                "terminal" => new
+                {
+                    type = "terminal",
+                    terminalId = item.TerminalId ?? string.Empty
+                },
+                _ => new
+                {
+                    type = "content",
+                    content = (object?)item.Content ?? new { type = "text", text = item.Text ?? string.Empty }
+                }
+            }).ToArray();
         }
 
         /// <summary>

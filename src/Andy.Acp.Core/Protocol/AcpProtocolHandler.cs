@@ -1,8 +1,11 @@
 using System;
+using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Andy.Acp.Core.Agent;
 using Andy.Acp.Core.JsonRpc;
 
 namespace Andy.Acp.Core.Protocol
@@ -19,6 +22,7 @@ namespace Andy.Acp.Core.Protocol
         private readonly AcpConnectionState _state;
         private readonly ServerInfo _serverInfo;
         private readonly AcpAgentCapabilities _agentCapabilities;
+        private readonly IAuthenticationProvider? _authProvider;
         private readonly ILogger<AcpProtocolHandler>? _logger;
 
         /// <summary>The highest ACP protocol version this agent supports.</summary>
@@ -31,11 +35,13 @@ namespace Andy.Acp.Core.Protocol
             AcpConnectionState state,
             ServerInfo serverInfo,
             AcpAgentCapabilities agentCapabilities,
-            ILogger<AcpProtocolHandler>? logger = null)
+            ILogger<AcpProtocolHandler>? logger = null,
+            IAuthenticationProvider? authProvider = null)
         {
             _state = state ?? throw new ArgumentNullException(nameof(state));
             _serverInfo = serverInfo ?? throw new ArgumentNullException(nameof(serverInfo));
             _agentCapabilities = agentCapabilities ?? throw new ArgumentNullException(nameof(agentCapabilities));
+            _authProvider = authProvider;
             _logger = logger;
         }
 
@@ -70,6 +76,8 @@ namespace Andy.Acp.Core.Protocol
             _state.ClientCapabilities = initParams.ClientCapabilities ?? new AcpClientCapabilities();
             _state.ProtocolVersion = negotiated;
             _state.Initialized = true;
+            // Agents that don't require authentication are implicitly authenticated.
+            _state.Authenticated = _authProvider?.RequiresAuthentication != true;
 
             _logger?.LogInformation(
                 "Initialized: negotiated protocol version {Version} (client requested {Requested})",
@@ -84,7 +92,9 @@ namespace Andy.Acp.Core.Protocol
                     Version = _serverInfo.Version
                 },
                 AgentCapabilities = _agentCapabilities,
-                AuthMethods = new()
+                AuthMethods = _authProvider?.GetAuthMethods()
+                    .Select(m => new AuthMethodDescription { Id = m.Id, Name = m.Name, Description = m.Description })
+                    .ToList() ?? new()
             };
 
             return Task.FromResult<object?>(result);
@@ -109,7 +119,51 @@ namespace Andy.Acp.Core.Protocol
         }
 
         /// <summary>
-        /// Registers the ACP lifecycle methods. Only <c>initialize</c> is part of ACP v1.
+        /// Handles the ACP <c>authenticate</c> request. On success the connection is marked
+        /// authenticated and session methods become available.
+        /// </summary>
+        public async Task<object?> HandleAuthenticateAsync(object? parameters, CancellationToken cancellationToken = default)
+        {
+            if (_authProvider == null)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound, "Authentication is not supported");
+
+            if (!_state.Initialized)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.SessionNotInitialized,
+                    "Connection is not initialized. Call initialize first.");
+
+            var req = DeserializeParams<AuthenticateParams>(parameters);
+            if (string.IsNullOrEmpty(req?.MethodId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams, "methodId is required");
+
+            if (_authProvider.GetAuthMethods().All(m => m.Id != req!.MethodId))
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.InvalidParams,
+                    $"Unknown auth method: {req!.MethodId}");
+
+            await _authProvider.AuthenticateAsync(req!.MethodId, cancellationToken).ConfigureAwait(false);
+            _state.Authenticated = true;
+
+            _logger?.LogInformation("Authenticated via method {MethodId}", req.MethodId);
+
+            // ACP AuthenticateResponse is an empty object.
+            return new { };
+        }
+
+        /// <summary>Handles the ACP <c>logout</c> request.</summary>
+        public async Task<object?> HandleLogoutAsync(object? parameters, CancellationToken cancellationToken = default)
+        {
+            if (_authProvider == null || !_authProvider.SupportsLogout)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound, "Logout is not supported");
+
+            await _authProvider.LogoutAsync(cancellationToken).ConfigureAwait(false);
+            _state.Authenticated = !_authProvider.RequiresAuthentication;
+
+            _logger?.LogInformation("Logged out");
+            return new { };
+        }
+
+        /// <summary>
+        /// Registers the ACP lifecycle methods: <c>initialize</c>, plus
+        /// <c>authenticate</c>/<c>logout</c> when an authentication provider is present.
         /// </summary>
         public void RegisterMethods(JsonRpcHandler jsonRpcHandler)
         {
@@ -117,7 +171,22 @@ namespace Andy.Acp.Core.Protocol
                 throw new ArgumentNullException(nameof(jsonRpcHandler));
 
             jsonRpcHandler.RegisterMethod("initialize", HandleInitializeAsync);
-            _logger?.LogInformation("Registered ACP protocol method: initialize");
+
+            if (_authProvider != null)
+            {
+                jsonRpcHandler.RegisterMethod("authenticate", HandleAuthenticateAsync);
+                if (_authProvider.SupportsLogout)
+                    jsonRpcHandler.RegisterMethod("logout", HandleLogoutAsync);
+            }
+
+            _logger?.LogInformation("Registered ACP protocol methods: initialize{Auth}",
+                _authProvider != null ? ", authenticate" + (_authProvider.SupportsLogout ? ", logout" : "") : "");
+        }
+
+        private class AuthenticateParams
+        {
+            [JsonPropertyName("methodId")]
+            public string MethodId { get; set; } = string.Empty;
         }
 
         private static T? DeserializeParams<T>(object? parameters) where T : class

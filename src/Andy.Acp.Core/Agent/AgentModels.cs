@@ -402,6 +402,13 @@ namespace Andy.Acp.Core.Agent
         public SessionModeState? Modes { get; set; }
 
         /// <summary>
+        /// Optional ACP session config options (models, reasoning levels, toggles). When
+        /// set, they are returned in the session/new, session/load, and session/resume
+        /// responses.
+        /// </summary>
+        public List<SessionConfigOption>? ConfigOptions { get; set; }
+
+        /// <summary>
         /// Additional metadata
         /// </summary>
         public Dictionary<string, object>? Metadata { get; set; }
