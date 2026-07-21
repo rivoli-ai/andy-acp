@@ -10,6 +10,7 @@ using Andy.Acp.Core.JsonRpc;
 using Andy.Acp.Core.Protocol;
 using Andy.Acp.Core.Session;
 using Andy.Acp.Core.Transport;
+using V2 = Andy.Acp.Core.Protocol.V2;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Acp.Core.Server
@@ -22,6 +23,7 @@ namespace Andy.Acp.Core.Server
     {
         private readonly IAgentProvider _agentProvider;
         private readonly ServerInfo _serverInfo;
+        private readonly AcpServerOptions _options;
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<AcpServer>? _logger;
 
@@ -37,12 +39,16 @@ namespace Andy.Acp.Core.Server
         /// <param name="agentProvider">Required: The agent that handles prompts and reasoning</param>
         /// <param name="serverInfo">Optional: Server identification information</param>
         /// <param name="loggerFactory">Optional: Logger factory for diagnostics</param>
+        /// <param name="options">Optional: server options, including the protocol-version opt-in
+        /// (<see cref="AcpServerOptions.EnableV2Alpha"/>). Defaults to serving stable v1 only.</param>
         public AcpServer(
             IAgentProvider agentProvider,
             ServerInfo? serverInfo = null,
-            ILoggerFactory? loggerFactory = null)
+            ILoggerFactory? loggerFactory = null,
+            AcpServerOptions? options = null)
         {
             _agentProvider = agentProvider ?? throw new ArgumentNullException(nameof(agentProvider));
+            _options = options ?? new AcpServerOptions();
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<AcpServer>();
 
@@ -126,8 +132,33 @@ namespace Andy.Acp.Core.Server
                         : null
                 };
 
+                // v2 (alpha) capabilities are built only when the host opted in.
+                V2.V2AgentCapabilities? v2Capabilities = null;
+                if (_options.EnableV2Alpha)
+                {
+                    v2Capabilities = new V2.V2AgentCapabilities
+                    {
+                        Session = new V2.V2SessionCapabilities
+                        {
+                            Prompt = new V2.V2PromptCapabilities
+                            {
+                                Image = agentCapabilities.ImagePrompts ? new CapabilityMarker() : null,
+                                Audio = agentCapabilities.AudioPrompts ? new CapabilityMarker() : null,
+                                EmbeddedContext = agentCapabilities.EmbeddedContext ? new CapabilityMarker() : null
+                            },
+                            Mcp = new V2.V2McpCapabilities
+                            {
+                                Stdio = new CapabilityMarker(), // stdio is always accepted
+                                Http = agentCapabilities.McpHttp ? new CapabilityMarker() : null
+                            },
+                            Delete = _agentProvider is ISessionCatalogProvider ? new CapabilityMarker() : null,
+                            AdditionalDirectories = agentCapabilities.AdditionalDirectories ? new CapabilityMarker() : null
+                        }
+                    };
+                }
+
                 // Shared connection state enforces initialize-before-session ordering and
-                // carries the negotiated client capabilities.
+                // carries the negotiated protocol version and client capabilities.
                 var connectionState = new AcpConnectionState();
 
                 // Register the initialize handshake handler (plus authenticate/logout when
@@ -137,7 +168,9 @@ namespace Andy.Acp.Core.Server
                     _serverInfo,
                     acpAgentCapabilities,
                     _loggerFactory?.CreateLogger<AcpProtocolHandler>(),
-                    authProvider);
+                    authProvider,
+                    _options.SupportedVersions,
+                    v2Capabilities);
                 protocolHandler.RegisterMethods(jsonRpcHandler);
 
                 // Agent → client request channel (fs/*, terminal/*, session/request_permission).
@@ -153,6 +186,42 @@ namespace Andy.Acp.Core.Server
                 sessionHandler.SetTransport(transport);  // Enable sending session/update notifications
                 sessionHandler.SetClient(acpClient);     // Enable agent-to-client requests
                 sessionHandler.RegisterMethods();
+
+                // When v2 alpha is enabled, register per-method version routers: shared
+                // method names dispatch to the v1 or v2 implementation based on the
+                // connection's negotiated version. v1-only methods (session/load,
+                // session/set_mode, authenticate, logout) stay registered as-is and are
+                // blocked on v2 connections by the AcpMethodRegistry gate in the dispatch
+                // path; likewise v2-only methods on v1 connections.
+                if (_options.EnableV2Alpha)
+                {
+                    var v2SessionHandler = new V2.AcpSessionHandlerV2(
+                        _agentProvider,
+                        connectionState,
+                        _loggerFactory?.CreateLogger<V2.AcpSessionHandlerV2>());
+                    v2SessionHandler.SetTransport(transport);
+                    v2SessionHandler.SetClient(acpClient);
+
+                    JsonRpcMethodDelegate Route(JsonRpcMethodDelegate v1, JsonRpcMethodDelegate v2) =>
+                        (p, ct) => connectionState.ProtocolVersion == AcpVersions.V2Alpha ? v2(p, ct) : v1(p, ct);
+
+                    jsonRpcHandler.RegisterMethod("session/new",
+                        Route(sessionHandler.HandleNewSessionAsync, v2SessionHandler.HandleNewSessionAsync));
+                    jsonRpcHandler.RegisterMethod("session/prompt",
+                        Route(sessionHandler.HandlePromptAsync, v2SessionHandler.HandlePromptAsync));
+                    jsonRpcHandler.RegisterMethod("session/cancel",
+                        Route(sessionHandler.HandleCancelAsync, v2SessionHandler.HandleCancelAsync));
+                    jsonRpcHandler.RegisterMethod("session/set_config_option",
+                        Route(sessionHandler.HandleSetConfigOptionAsync, v2SessionHandler.HandleSetConfigOptionAsync));
+                    jsonRpcHandler.RegisterMethod("session/list",
+                        Route(sessionHandler.HandleListSessionsAsync, v2SessionHandler.HandleListSessionsAsync));
+                    jsonRpcHandler.RegisterMethod("session/delete",
+                        Route(sessionHandler.HandleDeleteSessionAsync, v2SessionHandler.HandleDeleteSessionAsync));
+                    jsonRpcHandler.RegisterMethod("session/resume",
+                        Route(sessionHandler.HandleResumeSessionAsync, v2SessionHandler.HandleResumeSessionAsync));
+                    jsonRpcHandler.RegisterMethod("session/close",
+                        Route(sessionHandler.HandleCloseSessionAsync, v2SessionHandler.HandleCloseSessionAsync));
+                }
 
                 // Filesystem and terminal are agent → client requests, so no inbound fs/*
                 // or terminal/* handlers are registered here.
@@ -208,7 +277,7 @@ namespace Andy.Acp.Core.Server
                         // Dispatch handling without blocking the read loop. Failures are
                         // observed in the continuation and never terminate the loop silently.
                         var handlerTask = Task.Run(
-                            () => DispatchMessageAsync(messageJson, jsonRpcHandler, transport, acpClient, cancellationToken),
+                            () => DispatchMessageAsync(messageJson, jsonRpcHandler, transport, acpClient, connectionState, cancellationToken),
                             CancellationToken.None);
 
                         inFlight.TryAdd(handlerTask, 0);
@@ -263,6 +332,7 @@ namespace Andy.Acp.Core.Server
             JsonRpcHandler jsonRpcHandler,
             ITransport transport,
             AcpClient acpClient,
+            AcpConnectionState connectionState,
             CancellationToken cancellationToken)
         {
             JsonRpcResponse? response = null;
@@ -275,6 +345,25 @@ namespace Andy.Acp.Core.Server
                 {
                     _logger?.LogDebug("Processing {Kind}: {Method} (ID: {Id})",
                         request.IsNotification ? "notification" : "request", request.Method, request.Id);
+
+                    // Central version gate: once a version is negotiated, methods that do
+                    // not exist in it are rejected here, regardless of registration.
+                    if (connectionState.Initialized &&
+                        !AcpMethodRegistry.IsAvailable(request.Method, connectionState.ProtocolVersion))
+                    {
+                        _logger?.LogWarning("Method {Method} not available in negotiated protocol version {Version}",
+                            request.Method, connectionState.ProtocolVersion);
+
+                        if (!request.IsNotification)
+                        {
+                            var gateError = JsonRpcSerializer.CreateErrorResponse(
+                                request,
+                                JsonRpcErrorCodes.MethodNotFound,
+                                $"Method '{request.Method}' is not available in negotiated protocol version {connectionState.ProtocolVersion}");
+                            await WriteResponseAsync(transport, gateError, cancellationToken).ConfigureAwait(false);
+                        }
+                        return;
+                    }
 
                     if (request.Method == "$/cancel_request")
                     {
@@ -323,21 +412,24 @@ namespace Andy.Acp.Core.Server
             }
 
             if (response != null)
+                await WriteResponseAsync(transport, response, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task WriteResponseAsync(ITransport transport, JsonRpcResponse response, CancellationToken cancellationToken)
+        {
+            try
             {
-                try
-                {
-                    var responseJson = JsonRpcSerializer.Serialize(response);
-                    await transport.WriteMessageAsync(responseJson, cancellationToken).ConfigureAwait(false);
-                    _logger?.LogTrace("Sent response: {ResponseLength} bytes", responseJson.Length);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Shutting down; nothing to write.
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "Failed to write response");
-                }
+                var responseJson = JsonRpcSerializer.Serialize(response);
+                await transport.WriteMessageAsync(responseJson, cancellationToken).ConfigureAwait(false);
+                _logger?.LogTrace("Sent response: {ResponseLength} bytes", responseJson.Length);
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutting down; nothing to write.
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to write response");
             }
         }
 

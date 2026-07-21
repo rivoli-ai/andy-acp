@@ -438,8 +438,46 @@ By design (not gaps):
   library
 - JSON-RPC batch requests are intentionally **not** supported and are rejected
 
-The protocol version served is centralized in `AcpVersions` (currently v1 only);
-no other code hardcodes a protocol version.
+## Choosing a protocol version
+
+The library serves **stable ACP v1 by default**. ACP v2 (**alpha**) support exists but
+must be explicitly opted into — v2 is alpha upstream and may change incompatibly:
+
+```csharp
+// Default: stable v1 only. A client requesting v2 is negotiated down to v1.
+var server = new AcpServer(agent);
+
+// Opt-in: serve v1 AND v2 alpha. Each connection's version is fixed at initialize.
+var server = new AcpServer(agent, options: new AcpServerOptions { EnableV2Alpha = true });
+```
+
+There is exactly one source of truth per concern, so the supported version is never
+ambiguous in code:
+
+| concern | single source of truth |
+|---|---|
+| Version constants | `AcpVersions` (`V1`, `V2Alpha`, `Default`, `All`) |
+| What this server serves | `AcpServerOptions.SupportedVersions` |
+| What this connection speaks | `AcpConnectionState.ProtocolVersion` (set at initialize) |
+| Which methods exist in which version | `AcpMethodRegistry` (derived from the vendored `meta.json` files) |
+
+Dispatch is centrally gated on the registry: calling a v1-only method (e.g.
+`session/load`) on a v2 connection — or a v2-only method (e.g. `auth/login`) on a v1
+connection — returns method-not-found regardless of what is registered. v2 wire models
+live in the separate `Andy.Acp.Core.Protocol.V2` namespace and are never mixed with v1
+types where the schemas differ.
+
+Key v2 differences handled automatically (the provider API stays version-neutral):
+`session/load` → `session/resume` + `replayFrom:{"type":"start"}`; `session/set_mode`
+→ config options; `authenticate`/`logout` → `auth/login`/`auth/logout`; prompt
+`stopReason` moves from the response to `state_update {state:"idle"}`; capability
+booleans become `{}` markers; config options use `configId`/`groupId`. On v2 there are
+no client-served `fs/*`/`terminal/*` methods, and `SendCurrentModeAsync` throws
+(v2 removed `current_mode_update` — use config options with category `mode`).
+
+Both pinned schemas are vendored in the test project (v1 = `schema-v1.20.0`,
+v2 = `schema-v2.0.0-alpha.x`), and CI validates all emitted wire shapes against the
+schema of the negotiated version.
 
 ## Contributing
 

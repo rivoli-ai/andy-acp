@@ -23,26 +23,37 @@ namespace Andy.Acp.Core.Protocol
         private readonly ServerInfo _serverInfo;
         private readonly AcpAgentCapabilities _agentCapabilities;
         private readonly IAuthenticationProvider? _authProvider;
+        private readonly System.Collections.Generic.IReadOnlySet<int> _supportedVersions;
+        private readonly V2.V2AgentCapabilities? _v2Capabilities;
         private readonly ILogger<AcpProtocolHandler>? _logger;
 
-        /// <summary>The highest ACP protocol version this agent supports (see <see cref="AcpVersions"/>).</summary>
-        public const int ProtocolVersion = AcpVersions.Current;
+        /// <summary>The default ACP protocol version (see <see cref="AcpVersions"/>).</summary>
+        public const int ProtocolVersion = AcpVersions.V1;
 
         /// <summary>The lowest ACP protocol version this agent supports (see <see cref="AcpVersions"/>).</summary>
-        public const int MinProtocolVersion = AcpVersions.Minimum;
+        public const int MinProtocolVersion = AcpVersions.V1;
 
         public AcpProtocolHandler(
             AcpConnectionState state,
             ServerInfo serverInfo,
             AcpAgentCapabilities agentCapabilities,
             ILogger<AcpProtocolHandler>? logger = null,
-            IAuthenticationProvider? authProvider = null)
+            IAuthenticationProvider? authProvider = null,
+            System.Collections.Generic.IReadOnlySet<int>? supportedVersions = null,
+            V2.V2AgentCapabilities? v2Capabilities = null)
         {
             _state = state ?? throw new ArgumentNullException(nameof(state));
             _serverInfo = serverInfo ?? throw new ArgumentNullException(nameof(serverInfo));
             _agentCapabilities = agentCapabilities ?? throw new ArgumentNullException(nameof(agentCapabilities));
             _authProvider = authProvider;
+            _supportedVersions = supportedVersions ?? AcpVersions.Default;
+            _v2Capabilities = v2Capabilities;
             _logger = logger;
+
+            if (_supportedVersions.Contains(AcpVersions.V2Alpha) && _v2Capabilities == null)
+                throw new ArgumentException(
+                    "v2 alpha is in the supported-version set but no v2 capabilities were supplied",
+                    nameof(v2Capabilities));
         }
 
         /// <summary>
@@ -83,6 +94,25 @@ namespace Andy.Acp.Core.Protocol
                 "Initialized: negotiated protocol version {Version} (client requested {Requested})",
                 negotiated, initParams.ProtocolVersion);
 
+            if (negotiated == AcpVersions.V2Alpha)
+            {
+                // v2 shape: required `info`, marker-object `capabilities`, `methodId` auth methods.
+                var v2Result = new V2.V2InitializeResult
+                {
+                    ProtocolVersion = negotiated,
+                    Info = new Implementation
+                    {
+                        Name = _serverInfo.Name,
+                        Version = _serverInfo.Version
+                    },
+                    Capabilities = _v2Capabilities,
+                    AuthMethods = _authProvider?.GetAuthMethods()
+                        .Select(m => new V2.V2AuthMethod { MethodId = m.Id, Name = m.Name, Description = m.Description })
+                        .ToList()
+                };
+                return Task.FromResult<object?>(v2Result);
+            }
+
             var result = new AcpInitializeResult
             {
                 ProtocolVersion = negotiated,
@@ -101,21 +131,16 @@ namespace Andy.Acp.Core.Protocol
         }
 
         /// <summary>
-        /// Applies the ACP version-negotiation rule: if the client's requested version is
-        /// supported it is used; a higher request is clamped down to this agent's maximum; a
-        /// lower unsupported request falls back to the agent's maximum so the client can decide.
+        /// Applies the ACP version-negotiation rule against the configured supported set:
+        /// a supported requested version is used as-is; anything else falls back to the
+        /// highest supported version so the client can decide whether to proceed.
         /// </summary>
-        private static int NegotiateVersion(int? requested)
+        private int NegotiateVersion(int? requested)
         {
-            if (!requested.HasValue)
-                return ProtocolVersion;
+            if (requested.HasValue && _supportedVersions.Contains(requested.Value))
+                return requested.Value;
 
-            int v = requested.Value;
-            if (v > ProtocolVersion)
-                return ProtocolVersion;
-            if (v < MinProtocolVersion)
-                return ProtocolVersion;
-            return v;
+            return _supportedVersions.Max();
         }
 
         /// <summary>
@@ -148,10 +173,15 @@ namespace Andy.Acp.Core.Protocol
             return new { };
         }
 
-        /// <summary>Handles the ACP <c>logout</c> request.</summary>
+        /// <summary>
+        /// Handles the ACP <c>logout</c> (v1) / <c>auth/logout</c> (v2) request. On v2,
+        /// non-empty authMethods imply mandatory logout support, so the SupportsLogout
+        /// opt-out only applies to v1 connections.
+        /// </summary>
         public async Task<object?> HandleLogoutAsync(object? parameters, CancellationToken cancellationToken = default)
         {
-            if (_authProvider == null || !_authProvider.SupportsLogout)
+            if (_authProvider == null ||
+                (!_authProvider.SupportsLogout && _state.ProtocolVersion != AcpVersions.V2Alpha))
                 throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound, "Logout is not supported");
 
             await _authProvider.LogoutAsync(cancellationToken).ConfigureAwait(false);
@@ -174,9 +204,18 @@ namespace Andy.Acp.Core.Protocol
 
             if (_authProvider != null)
             {
+                // v1 names. The method registry prevents these on v2-negotiated connections.
                 jsonRpcHandler.RegisterMethod("authenticate", HandleAuthenticateAsync);
                 if (_authProvider.SupportsLogout)
                     jsonRpcHandler.RegisterMethod("logout", HandleLogoutAsync);
+
+                // v2 names (same params: LoginAuthRequest.methodId matches, logout is empty).
+                // Only reachable on v2-negotiated connections via the method registry.
+                if (_supportedVersions.Contains(AcpVersions.V2Alpha))
+                {
+                    jsonRpcHandler.RegisterMethod("auth/login", HandleAuthenticateAsync);
+                    jsonRpcHandler.RegisterMethod("auth/logout", HandleLogoutAsync);
+                }
             }
 
             _logger?.LogInformation("Registered ACP protocol methods: initialize{Auth}",

@@ -54,15 +54,28 @@ namespace Andy.Acp.Core.Client
             IReadOnlyList<PermissionOption> options,
             CancellationToken cancellationToken = default)
         {
-            var result = await SendRequestAsync<PermissionResponseDto>("session/request_permission", new
-            {
-                sessionId,
-                toolCall,
-                options
-            }, cancellationToken).ConfigureAwait(false);
+            // The wire shape differs by negotiated protocol version: v1 uses a flattened
+            // required toolCall; v2 requires a title and nests the tool call in a subject.
+            object requestParams = _state.ProtocolVersion == Protocol.AcpVersions.V2Alpha
+                ? new
+                {
+                    sessionId,
+                    title = string.IsNullOrEmpty(toolCall.Title) ? "Permission required" : toolCall.Title!,
+                    subject = new { type = "tool_call", toolCall },
+                    options
+                }
+                : new
+                {
+                    sessionId,
+                    toolCall,
+                    options
+                };
+
+            var result = await SendRequestAsync<PermissionResponseDto>(
+                "session/request_permission", requestParams, cancellationToken).ConfigureAwait(false);
 
             var outcome = result?.Outcome;
-            if (outcome == null || string.Equals(outcome.Outcome, "cancelled", StringComparison.Ordinal))
+            if (outcome == null || !string.Equals(outcome.Outcome, "selected", StringComparison.Ordinal))
                 return PermissionOutcome.CancelledOutcome();
 
             return PermissionOutcome.Selected(outcome.OptionId ?? string.Empty);

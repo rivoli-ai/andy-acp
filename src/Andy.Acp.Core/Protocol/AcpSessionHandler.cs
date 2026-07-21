@@ -103,7 +103,7 @@ namespace Andy.Acp.Core.Protocol
             }
         }
 
-        private async Task<object?> HandleNewSessionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleNewSessionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
@@ -135,7 +135,7 @@ namespace Andy.Acp.Core.Protocol
             };
         }
 
-        private async Task<object?> HandleLoadSessionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleLoadSessionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
@@ -178,11 +178,13 @@ namespace Andy.Acp.Core.Protocol
             };
         }
 
-        private async Task<object?> HandleSetConfigOptionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleSetConfigOptionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
-            var configProvider = (ISessionConfigProvider)_agentProvider;
+            if (_agentProvider is not ISessionConfigProvider configProvider)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound,
+                    "session/set_config_option is not supported by this agent");
             var req = DeserializeParams<SetConfigOptionRequest>(parameters);
 
             if (string.IsNullOrEmpty(req?.SessionId))
@@ -217,11 +219,13 @@ namespace Andy.Acp.Core.Protocol
             return new { configOptions = options };
         }
 
-        private async Task<object?> HandleListSessionsAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleListSessionsAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
-            var catalog = (ISessionCatalogProvider)_agentProvider;
+            if (_agentProvider is not ISessionCatalogProvider catalog)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound,
+                    "Session catalog methods are not supported by this agent");
             var req = DeserializeParams<ListSessionsRequest>(parameters) ?? new ListSessionsRequest();
 
             var result = await catalog.ListSessionsAsync(req.Cwd, req.Cursor, cancellationToken);
@@ -240,11 +244,13 @@ namespace Andy.Acp.Core.Protocol
             };
         }
 
-        private async Task<object?> HandleDeleteSessionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleDeleteSessionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
-            var catalog = (ISessionCatalogProvider)_agentProvider;
+            if (_agentProvider is not ISessionCatalogProvider catalog)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound,
+                    "Session catalog methods are not supported by this agent");
             var req = DeserializeParams<SessionIdRequest>(parameters);
 
             if (string.IsNullOrEmpty(req?.SessionId))
@@ -259,11 +265,13 @@ namespace Andy.Acp.Core.Protocol
             return new { };
         }
 
-        private async Task<object?> HandleResumeSessionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleResumeSessionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
-            var catalog = (ISessionCatalogProvider)_agentProvider;
+            if (_agentProvider is not ISessionCatalogProvider catalog)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound,
+                    "Session catalog methods are not supported by this agent");
             var req = DeserializeParams<LoadSessionRequest>(parameters);
 
             if (string.IsNullOrEmpty(req?.SessionId))
@@ -296,11 +304,13 @@ namespace Andy.Acp.Core.Protocol
             };
         }
 
-        private async Task<object?> HandleCloseSessionAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleCloseSessionAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
-            var catalog = (ISessionCatalogProvider)_agentProvider;
+            if (_agentProvider is not ISessionCatalogProvider catalog)
+                throw new JsonRpcProtocolException(JsonRpcErrorCodes.MethodNotFound,
+                    "Session catalog methods are not supported by this agent");
             var req = DeserializeParams<SessionIdRequest>(parameters);
 
             if (string.IsNullOrEmpty(req?.SessionId))
@@ -318,7 +328,7 @@ namespace Andy.Acp.Core.Protocol
             return new { };
         }
 
-        private async Task<object?> HandlePromptAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandlePromptAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
@@ -383,7 +393,7 @@ namespace Andy.Acp.Core.Protocol
             }
         }
 
-        private async Task<object?> HandleSetModeAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleSetModeAsync(object? parameters, CancellationToken cancellationToken)
         {
             EnsureInitialized();
 
@@ -405,7 +415,7 @@ namespace Andy.Acp.Core.Protocol
             return new { };
         }
 
-        private async Task<object?> HandleCancelAsync(object? parameters, CancellationToken cancellationToken)
+        public async Task<object?> HandleCancelAsync(object? parameters, CancellationToken cancellationToken)
         {
             var req = DeserializeParams<CancelRequest>(parameters);
 
