@@ -5,7 +5,7 @@ This document provides a comprehensive guide for testing the Andy ACP implementa
 ## Prerequisites
 
 1. **Zed Editor** installed (download from [zed.dev](https://zed.dev/))
-2. **.NET 9.0 SDK** or later
+2. **.NET 8.0 SDK** or later
 3. **andy-acp repository** cloned and built
 
 ## Setup
