@@ -38,14 +38,19 @@ namespace Andy.Acp.Core.Agent
             CancellationToken cancellationToken);
 
         /// <summary>
-        /// Load an existing session to resume a previous conversation.
-        /// Implementations should return null or throw if session doesn't exist.
+        /// Load an existing session to resume a previous conversation. Before returning,
+        /// the implementation should replay the conversation history (user messages, agent
+        /// messages, tool calls, plans, mode/config state) through <paramref name="streamer"/>
+        /// as session/update notifications, as required by ACP session/load.
+        /// Implementations should return null (or throw) if the session doesn't exist.
         /// </summary>
-        /// <param name="sessionId">The session ID to load</param>
+        /// <param name="parameters">Load parameters (sessionId, cwd, mcpServers).</param>
+        /// <param name="streamer">Streamer used to replay session history to the client.</param>
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>Metadata about the loaded session, or null if not found</returns>
         Task<SessionMetadata?> LoadSessionAsync(
-            string sessionId,
+            LoadSessionParams parameters,
+            IResponseStreamer streamer,
             CancellationToken cancellationToken);
 
         /// <summary>
@@ -57,29 +62,16 @@ namespace Andy.Acp.Core.Agent
         Task CancelSessionAsync(string sessionId, CancellationToken cancellationToken);
 
         /// <summary>
-        /// Set the operating mode for a session (e.g., "code", "chat", "architect").
+        /// Set the operating mode for a session by ACP mode id (e.g., "code", "chat").
         /// Optional - implementations can return false if not supported.
         /// </summary>
         /// <param name="sessionId">The session ID</param>
-        /// <param name="mode">The mode to set</param>
+        /// <param name="modeId">The ACP mode id to set</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>True if mode was set successfully</returns>
+        /// <returns>True if the mode was set successfully</returns>
         Task<bool> SetSessionModeAsync(
             string sessionId,
-            string mode,
-            CancellationToken cancellationToken);
-
-        /// <summary>
-        /// Set the model variant for a session.
-        /// Optional - implementations can return false if not supported.
-        /// </summary>
-        /// <param name="sessionId">The session ID</param>
-        /// <param name="model">The model identifier</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>True if model was set successfully</returns>
-        Task<bool> SetSessionModelAsync(
-            string sessionId,
-            string model,
+            string modeId,
             CancellationToken cancellationToken);
 
         /// <summary>

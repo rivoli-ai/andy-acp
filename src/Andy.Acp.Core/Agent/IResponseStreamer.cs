@@ -1,15 +1,24 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Andy.Acp.Core.Client;
 
 namespace Andy.Acp.Core.Agent
 {
     /// <summary>
     /// Interface for streaming agent responses back to the client in real-time.
     /// This allows progressive updates as the agent generates responses and executes tools.
+    /// It also exposes <see cref="Client"/>, the handle for agent → client requests
+    /// (filesystem, terminal, permission) over the same connection.
     /// </summary>
     public interface IResponseStreamer
     {
+        /// <summary>
+        /// The handle for issuing ACP requests to the client (filesystem, terminal,
+        /// permission). Throws if no client is available (e.g. in non-connected contexts).
+        /// </summary>
+        IAcpClient Client { get; }
+
         /// <summary>
         /// Send a chunk of the agent's message text.
         /// Called multiple times as the LLM generates tokens.

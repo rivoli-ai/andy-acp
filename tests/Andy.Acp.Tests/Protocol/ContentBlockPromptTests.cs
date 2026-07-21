@@ -19,7 +19,8 @@ namespace Andy.Acp.Tests.Protocol
         {
             var handler = new JsonRpcHandler();
             var agent = new CapturingAgent { Caps = caps };
-            var sessionHandler = new AcpSessionHandler(agent, handler);
+            var state = new AcpConnectionState { Initialized = true };
+            var sessionHandler = new AcpSessionHandler(agent, handler, state);
             sessionHandler.RegisterMethods();
             return (handler, agent);
         }
@@ -116,11 +117,10 @@ namespace Andy.Acp.Tests.Protocol
 
             public Task<SessionMetadata> CreateSessionAsync(NewSessionParams? parameters, CancellationToken cancellationToken)
                 => Task.FromResult(new SessionMetadata { SessionId = "s1" });
-            public Task<SessionMetadata?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
+            public Task<SessionMetadata?> LoadSessionAsync(LoadSessionParams parameters, IResponseStreamer streamer, CancellationToken cancellationToken)
                 => Task.FromResult<SessionMetadata?>(null);
             public Task CancelSessionAsync(string sessionId, CancellationToken cancellationToken) => Task.CompletedTask;
-            public Task<bool> SetSessionModeAsync(string sessionId, string mode, CancellationToken cancellationToken) => Task.FromResult(true);
-            public Task<bool> SetSessionModelAsync(string sessionId, string model, CancellationToken cancellationToken) => Task.FromResult(true);
+            public Task<bool> SetSessionModeAsync(string sessionId, string modeId, CancellationToken cancellationToken) => Task.FromResult(true);
             public AgentCapabilities GetCapabilities() => Caps;
         }
     }

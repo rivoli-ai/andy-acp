@@ -122,8 +122,6 @@ namespace SimpleEchoAgent
             // Create and run the ACP server
             var acpServer = new AcpServer(
                 agentProvider: agentProvider,
-                fileSystemProvider: null,  // Not needed for this simple example
-                terminalProvider: null,    // Not needed for this simple example
                 serverInfo: serverInfo,
                 loggerFactory: loggerFactory
             );

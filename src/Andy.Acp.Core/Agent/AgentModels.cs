@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace Andy.Acp.Core.Agent
 {
@@ -232,34 +233,131 @@ namespace Andy.Acp.Core.Agent
     }
 
     /// <summary>
-    /// Parameters for creating a new session
+    /// Parameters for creating a new session (ACP <c>session/new</c>). <see cref="Cwd"/>
+    /// and <see cref="McpServers"/> are required by ACP and are passed through to the agent
+    /// without loss.
     /// </summary>
     public class NewSessionParams
     {
         /// <summary>
-        /// Optional session ID (if not provided, one will be generated)
+        /// The absolute working directory for the session (ACP required field).
+        /// </summary>
+        public string? Cwd { get; set; }
+
+        /// <summary>
+        /// MCP servers the client has configured for the session (ACP required field;
+        /// may be empty).
+        /// </summary>
+        public List<McpServerConfig> McpServers { get; set; } = new();
+
+        /// <summary>
+        /// Additional readable directories granted for the session.
+        /// </summary>
+        public List<string>? AdditionalDirectories { get; set; }
+
+        /// <summary>
+        /// Optional session ID hint (non-ACP; implementation convenience).
         /// </summary>
         public string? SessionId { get; set; }
 
         /// <summary>
-        /// Initial system prompt or instructions
-        /// </summary>
-        public string? SystemPrompt { get; set; }
-
-        /// <summary>
-        /// Initial mode (e.g., "code", "chat")
+        /// Initial mode hint (non-ACP; implementation convenience).
         /// </summary>
         public string? Mode { get; set; }
 
         /// <summary>
-        /// Preferred model
+        /// Preferred model hint (non-ACP; implementation convenience).
         /// </summary>
         public string? Model { get; set; }
+    }
 
-        /// <summary>
-        /// Additional metadata
-        /// </summary>
-        public Dictionary<string, object>? Metadata { get; set; }
+    /// <summary>
+    /// Parameters for loading/resuming a session (ACP <c>session/load</c>).
+    /// </summary>
+    public class LoadSessionParams
+    {
+        /// <summary>The session ID to load (required).</summary>
+        public string SessionId { get; set; } = string.Empty;
+
+        /// <summary>The absolute working directory for the session (required).</summary>
+        public string? Cwd { get; set; }
+
+        /// <summary>MCP servers configured for the session (required; may be empty).</summary>
+        public List<McpServerConfig> McpServers { get; set; } = new();
+
+        /// <summary>Additional readable directories granted for the session.</summary>
+        public List<string>? AdditionalDirectories { get; set; }
+    }
+
+    /// <summary>
+    /// MCP server configuration passed with session requests. Fields populated depend on
+    /// <see cref="Type"/> (stdio by default, or http/sse).
+    /// </summary>
+    public class McpServerConfig
+    {
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("command")]
+        public string? Command { get; set; }
+
+        [JsonPropertyName("args")]
+        public List<string>? Args { get; set; }
+
+        [JsonPropertyName("env")]
+        public List<EnvVariable>? Env { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("headers")]
+        public List<HttpHeader>? Headers { get; set; }
+    }
+
+    /// <summary>An environment variable (ACP <c>EnvVariable</c>).</summary>
+    public class EnvVariable
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public string Value { get; set; } = string.Empty;
+    }
+
+    /// <summary>An HTTP header (ACP <c>HttpHeader</c>).</summary>
+    public class HttpHeader
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public string Value { get; set; } = string.Empty;
+    }
+
+    /// <summary>ACP <c>SessionModeState</c> — the current and available session modes.</summary>
+    public class SessionModeState
+    {
+        [JsonPropertyName("currentModeId")]
+        public string CurrentModeId { get; set; } = string.Empty;
+
+        [JsonPropertyName("availableModes")]
+        public List<SessionMode> AvailableModes { get; set; } = new();
+    }
+
+    /// <summary>ACP <c>SessionMode</c>.</summary>
+    public class SessionMode
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
     }
 
     /// <summary>
@@ -296,6 +394,12 @@ namespace Andy.Acp.Core.Agent
         /// Number of messages in the conversation
         /// </summary>
         public int MessageCount { get; set; }
+
+        /// <summary>
+        /// Optional ACP session mode state (current mode + available modes). When set, it
+        /// is returned in the session/new and session/load responses.
+        /// </summary>
+        public SessionModeState? Modes { get; set; }
 
         /// <summary>
         /// Additional metadata

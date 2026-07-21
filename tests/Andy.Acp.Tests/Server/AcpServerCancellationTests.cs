@@ -25,8 +25,10 @@ namespace Andy.Acp.Tests.Server
             using var serverCts = new CancellationTokenSource();
             var serverTask = server.RunAsync(harness.ServerTransport, serverCts.Token);
 
+            await InitializeAsync(harness);
+
             // Create a session.
-            await harness.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}""");
+            await harness.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}""");
             var newDoc = JsonDocument.Parse(await harness.ReadMessageAsync());
             var sessionId = newDoc.RootElement.GetProperty("result").GetProperty("sessionId").GetString();
             Assert.False(string.IsNullOrEmpty(sessionId));
@@ -66,17 +68,27 @@ namespace Andy.Acp.Tests.Server
             using var serverCts = new CancellationTokenSource();
             var serverTask = server.RunAsync(harness.ServerTransport, serverCts.Token);
 
+            await InitializeAsync(harness);
+
             // Cancel with no active prompt: must not throw or produce a response.
             await harness.SendAsync("""{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"nope"}}""");
 
             // A subsequent normal request still works.
-            await harness.SendAsync("""{"jsonrpc":"2.0","id":9,"method":"session/new","params":{}}""");
+            await harness.SendAsync("""{"jsonrpc":"2.0","id":9,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}""");
             var doc = await ReadUntilIdAsync(harness, 9, TimeSpan.FromSeconds(5));
             Assert.True(doc.RootElement.GetProperty("result").TryGetProperty("sessionId", out _));
 
             serverCts.Cancel();
             harness.Complete();
             try { await serverTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+        }
+
+        private static async Task InitializeAsync(InMemoryDuplex harness)
+        {
+            // Complete the handshake and consume the response so that the connection is
+            // initialized before any session method is sent.
+            await harness.SendAsync("""{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}""");
+            await harness.ReadMessageAsync();
         }
 
         private static async Task<JsonDocument> ReadUntilIdAsync(InMemoryDuplex harness, long id, TimeSpan timeout)
@@ -112,7 +124,7 @@ namespace Andy.Acp.Tests.Server
                     Model = "test"
                 });
 
-            public Task<SessionMetadata?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
+            public Task<SessionMetadata?> LoadSessionAsync(LoadSessionParams parameters, IResponseStreamer streamer, CancellationToken cancellationToken)
                 => Task.FromResult<SessionMetadata?>(null);
 
             public async Task<AgentResponse> ProcessPromptAsync(
@@ -124,8 +136,7 @@ namespace Andy.Acp.Tests.Server
             }
 
             public Task CancelSessionAsync(string sessionId, CancellationToken cancellationToken) => Task.CompletedTask;
-            public Task<bool> SetSessionModeAsync(string sessionId, string mode, CancellationToken cancellationToken) => Task.FromResult(true);
-            public Task<bool> SetSessionModelAsync(string sessionId, string model, CancellationToken cancellationToken) => Task.FromResult(true);
+            public Task<bool> SetSessionModeAsync(string sessionId, string modeId, CancellationToken cancellationToken) => Task.FromResult(true);
             public AgentCapabilities GetCapabilities() => new();
         }
     }

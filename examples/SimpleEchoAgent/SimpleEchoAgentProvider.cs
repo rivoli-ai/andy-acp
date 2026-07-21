@@ -40,8 +40,9 @@ namespace SimpleEchoAgent
             });
         }
 
-        public Task<SessionMetadata?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
+        public Task<SessionMetadata?> LoadSessionAsync(LoadSessionParams parameters, IResponseStreamer streamer, CancellationToken cancellationToken)
         {
+            var sessionId = parameters.SessionId;
             if (_sessions.TryGetValue(sessionId, out var sessionData))
             {
                 sessionData.LastAccessedAt = DateTime.UtcNow;
@@ -105,22 +106,11 @@ namespace SimpleEchoAgent
             return Task.CompletedTask;
         }
 
-        public Task<bool> SetSessionModeAsync(string sessionId, string mode, CancellationToken cancellationToken)
+        public Task<bool> SetSessionModeAsync(string sessionId, string modeId, CancellationToken cancellationToken)
         {
             if (_sessions.TryGetValue(sessionId, out var sessionData))
             {
-                sessionData.Mode = mode;
-                return Task.FromResult(true);
-            }
-
-            return Task.FromResult(false);
-        }
-
-        public Task<bool> SetSessionModelAsync(string sessionId, string model, CancellationToken cancellationToken)
-        {
-            if (_sessions.TryGetValue(sessionId, out var sessionData))
-            {
-                sessionData.Model = model;
+                sessionData.Mode = modeId;
                 return Task.FromResult(true);
             }
 

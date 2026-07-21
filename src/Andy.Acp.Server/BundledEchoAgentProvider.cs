@@ -33,13 +33,13 @@ namespace Andy.Acp.Server
             });
         }
 
-        public Task<SessionMetadata?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
+        public Task<SessionMetadata?> LoadSessionAsync(LoadSessionParams parameters, IResponseStreamer streamer, CancellationToken cancellationToken)
         {
-            if (_sessions.TryGetValue(sessionId, out var createdAt))
+            if (_sessions.TryGetValue(parameters.SessionId, out var createdAt))
             {
                 return Task.FromResult<SessionMetadata?>(new SessionMetadata
                 {
-                    SessionId = sessionId,
+                    SessionId = parameters.SessionId,
                     CreatedAt = createdAt,
                     LastAccessedAt = DateTime.UtcNow,
                     Mode = "chat",
@@ -73,10 +73,7 @@ namespace Andy.Acp.Server
 
         public Task CancelSessionAsync(string sessionId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task<bool> SetSessionModeAsync(string sessionId, string mode, CancellationToken cancellationToken)
-            => Task.FromResult(_sessions.ContainsKey(sessionId));
-
-        public Task<bool> SetSessionModelAsync(string sessionId, string model, CancellationToken cancellationToken)
+        public Task<bool> SetSessionModeAsync(string sessionId, string modeId, CancellationToken cancellationToken)
             => Task.FromResult(_sessions.ContainsKey(sessionId));
 
         public AgentCapabilities GetCapabilities() => new()

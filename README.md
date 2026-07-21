@@ -30,12 +30,11 @@ andy-acp/
 │       ├── Session/                # Session management
 │       ├── Protocol/               # ACP protocol handlers
 │       ├── Agent/                  # Agent provider interfaces
-│       ├── FileSystem/             # File system provider interface
-│       ├── Terminal/               # Terminal provider interface
+│       ├── Client/                 # Agent-to-client requests (fs, terminal, permission)
 │       ├── Server/                 # Unified ACP server
-│       └── Tools/                  # Tool framework (legacy/MCP compatibility)
+│       └── Tools/                  # Tool framework (MCP compatibility)
 ├── tests/
-│   └── Andy.Acp.Tests/             # Comprehensive unit tests (239 tests)
+│   └── Andy.Acp.Tests/             # Comprehensive unit tests (276 tests)
 │       ├── Transport/
 │       ├── JsonRpc/
 │       ├── Session/
@@ -81,11 +80,13 @@ andy-acp/
 
 - **JsonRpcSerializer**: Serialization/deserialization of JSON-RPC 2.0 messages
 - **JsonRpcHandler**: Method registration and request dispatching
-- **Message Types**: Request, Response, Notification, Error, Batch
+- **Message Types**: Request, Response, Notification, Error
 - **Error Handling**: Standard JSON-RPC error codes and custom exceptions
 - **Method Registration**: Dynamic method registration with async handlers
-- **Batch Support**: Process multiple requests in a single message
-- **Validation**: Strict JSON-RPC 2.0 specification compliance
+- **Compliance**: `result: null` on success, explicit-null-id vs. notification,
+  `error.data`, and safe internal-error messages. **Batch requests are not
+  supported** and a top-level array is rejected. Parameters are validated as
+  structured JSON values (not full JSON Schema validation).
 
 ### [COMPLETE] Issue #4: Session Management and State Handling
 **Status: Complete** | 73 tests | [Issue #4](https://github.com/rivoli-ai/andy-acp/issues/4)
@@ -101,24 +102,26 @@ andy-acp/
 ### [COMPLETE] Issue #5: Initialization Handshake Protocol
 **Status: Complete** | 23 tests | [Issue #5](https://github.com/rivoli-ai/andy-acp/issues/5)
 
-- **AcpProtocolHandler**: Handles initialize, initialized, shutdown methods
-- **Protocol Models**: InitializeParams, InitializeResult, ServerInfo, ServerCapabilities
-- **Capability Negotiation**: Tools, Prompts, Resources, Logging capabilities
-- **Protocol Version Validation**: Ensures client/server compatibility
-- **Graceful Shutdown**: Waits up to 5 seconds for pending requests
-- **State Management**: Validates requests based on session state
-- **Session Information**: Returns session ID, timeout, and metadata
+- **AcpProtocolHandler**: Handles the ACP v1 `initialize` handshake (only)
+- **Protocol Models**: ACP `ClientCapabilities`/`AgentCapabilities`, `Implementation`
+- **Capability Negotiation**: Integer `protocolVersion` negotiation; client fs/terminal
+  capabilities recorded for agent-to-client requests
+- **Initialize-before-session ordering**: session methods fail until `initialize` completes
+- **Note**: `initialized` and `shutdown` were removed (not part of ACP v1)
 
-### [COMPLETE] Issue #6: Tool Framework
-**Status: Complete** | 34 tests | [Issue #6](https://github.com/rivoli-ai/andy-acp/issues/6)
+### MCP-compatibility Tool Framework (not ACP tool calls)
+**Status: Available for MCP-style hosts** | [Issue #6](https://github.com/rivoli-ai/andy-acp/issues/6)
+
+> **Note:** This `tools/list` + `tools/call` framework is an **MCP-style** convenience,
+> distinct from ACP. In ACP, tool activity is reported to the client as `tool_call` and
+> `tool_call_update` **session/update** notifications (see the streaming section), not via
+> `tools/list`/`tools/call`. Use this framework only when hosting MCP-style tool calls.
 
 - **IAcpToolProvider**: Interface for tool registration and execution
-- **AcpToolsHandler**: Handles tools/list and tools/call protocol methods
-- **Tool Models**: AcpToolDefinition, AcpInputSchema, AcpToolResult (minimal, ACP-aligned)
+- **AcpToolsHandler**: Handles `tools/list` and `tools/call` (MCP-style)
+- **Tool Models**: AcpToolDefinition, AcpInputSchema, AcpToolResult (minimal)
 - **SimpleToolProvider**: Example implementation with 4 demonstration tools
-- **JSON Schema Support**: Parameter validation using JSON Schema (draft-07)
 - **Error Handling**: Graceful error responses for missing tools and execution failures
-- **Tool Registration**: Dynamic tool registration with async execution handlers
 - **Example Tools**: echo, calculator, get_time, reverse_string
 
 **Note**: This is the generic framework. Concrete andy-cli tools will use andy-tools library with an adapter pattern (see docs/TOOLS_COMPARISON.md).
@@ -128,7 +131,7 @@ andy-acp/
 
 - **IAgentProvider**: Core interface for implementing ACP-compatible agents
 - **IResponseStreamer**: Interface for streaming responses to clients
-- **Session Methods**: session/new, session/load, session/prompt, session/cancel, session/set_mode, session/set_model
+- **Session Methods**: session/new, session/load, session/prompt, session/cancel, session/set_mode
 - **SessionUpdateStreamer**: Sends session/update notifications for streaming responses
 - **AcpSessionHandler**: Handles all session/* protocol methods
 - **AcpServer**: Unified server that composes all handlers and providers
@@ -152,12 +155,28 @@ andy-acp/
 - **Response streaming** working (word-by-word display in Zed)
 - **Session management** properly tracking conversation state
 
-**Total: 239 tests passing**
+**Total: 276 tests passing** (including schema-backed ACP v1 validation and end-to-end stdio flows)
+
+## Supported ACP version and capabilities
+
+- **Protocol version:** ACP v1 (the `protocolVersion` integer `1`). On `initialize`, a
+  higher requested version is negotiated down to `1`.
+- **Agent capabilities advertised:** `loadSession`, and `promptCapabilities`
+  (`image`/`audio`/`embeddedContext`) reflecting the agent provider. Text and
+  `resource_link` content are always accepted.
+- **Client capabilities consumed:** `fs.readTextFile`, `fs.writeTextFile`, and `terminal`.
+  The agent issues `fs/*`, `terminal/*`, and `session/request_permission` **to the client**
+  and only when the client advertised the matching capability.
+- **Lifecycle methods:** `initialize`, `session/new`, `session/load`, `session/prompt`,
+  `session/set_mode` (by `modeId`), and the `session/cancel` notification. `initialized`,
+  `shutdown`, and `session/set_model` are **not** part of ACP v1 and are not implemented.
+
+See **Known limitations** below for optional ACP v1 features not yet implemented.
 
 ## Building and Testing
 
 ### Prerequisites
-- .NET 8.0 SDK or later
+- .NET 8.0 SDK (all projects target `net8.0`)
 
 ### Build
 ```bash
@@ -214,20 +233,21 @@ dotnet run --project examples/Andy.Acp.Examples -- --client | \
 
 Quick start:
 1. Build: `dotnet build examples/SimpleEchoAgent -c Release`
-2. Add to `~/.config/zed/settings.json`:
+2. Add a custom agent to `~/.config/zed/settings.json` using the current
+   `agent_servers` syntax:
 ```json
 {
-  "agent": {
-    "provider": {
-      "name": "custom",
+  "agent_servers": {
+    "Andy Echo": {
       "command": "/path/to/andy-acp/examples/SimpleEchoAgent/bin/Release/net8.0/SimpleEchoAgent",
-      "args": ["--acp"]
+      "args": ["--acp"],
+      "env": {}
     }
   }
 }
 ```
-3. Restart Zed and open Assistant panel
-4. Type a message - you should see it echoed back!
+3. Restart Zed, open the Agent Panel, and pick **Andy Echo** as the agent.
+4. Type a message — you should see it echoed back.
 
 See `examples/SimpleEchoAgent/README.md` and `examples/Andy.Acp.Examples/README.md` for detailed instructions.
 
@@ -256,33 +276,33 @@ The transport auto-detects which format is being used.
 
 ### Agent Session Flow (Primary)
 ```json
-// 1. Client sends initialize
+// 1. Client sends initialize (protocolVersion is an integer)
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
   "protocolVersion":1,
-  "clientCapabilities":{"promptFormats":{"text":true}}
+  "clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true}
 }}
 
-// 2. Server responds with capabilities
+// 2. Agent responds with the negotiated version and its capabilities
 {"jsonrpc":"2.0","id":1,"result":{
   "protocolVersion":1,
-  "serverInfo":{"name":"Andy.CLI","version":"1.0.0"},
-  "capabilities":{
+  "agentInfo":{"name":"Andy ACP Server","version":"1.0.0"},
+  "agentCapabilities":{
     "loadSession":true,
-    "audioPrompts":false,
-    "imagePrompts":false,
-    "embeddedContext":true
-  }
+    "promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},
+    "mcpCapabilities":{"http":false,"sse":false}
+  },
+  "authMethods":[]
 }}
 
-// 3. Client creates a new session
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}
+// 3. Client creates a new session (cwd and mcpServers are required)
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{
+  "cwd":"/absolute/path/to/workspace",
+  "mcpServers":[]
+}}
 
-// 4. Server returns session metadata
+// 4. Agent returns the session id (and optional mode state)
 {"jsonrpc":"2.0","id":2,"result":{
-  "sessionId":"session-abc123",
-  "createdAt":"2025-11-18T05:00:00Z",
-  "mode":"assistant",
-  "model":"andy-cli"
+  "sessionId":"session-abc123"
 }}
 
 // 5. Client sends a prompt
@@ -336,15 +356,17 @@ Demonstrates the complete ACP protocol with tools support:
 
 See `examples/Andy.Acp.Examples/README.md` for details.
 
-### Andy.CLI Integration (Production)
+### Andy.CLI Integration
 
 Full LLM-powered agent working in Zed:
-- Complete **session/prompt** implementation with streaming
-- **All Andy tools** available via tool execution
-- **Real LLM reasoning** (OpenAI, Anthropic, Gemini, Cerebras, Ollama)
-- Production-ready agent experience
+- **session/prompt** implementation with streaming
+- Andy tools surfaced as ACP `tool_call`/`tool_call_update` updates
+- LLM reasoning (OpenAI, Anthropic, Gemini, Cerebras, Ollama)
 
 The integration is in the [andy-cli repository](https://github.com/rivoli-ai/andy-cli) via `AndyAgentProvider.cs`.
+
+> This library is **ALPHA** (see the warning at the top). It is not production-ready and
+> has not undergone a security review.
 
 ## Status & Next Steps
 
@@ -355,7 +377,7 @@ The integration is in the [andy-cli repository](https://github.com/rivoli-ai/and
 - Line-delimited JSON transport (Zed-compatible)
 - session/new, session/load, session/prompt methods
 - session/update streaming notifications
-- Property name mapping (camelCase ↔ PascalCase)
+- Consistent camelCase ACP wire serialization
 
 ✓ **Working Examples**:
 - SimpleEchoAgent: Minimal working example (echoes messages)
@@ -367,14 +389,30 @@ The integration is in the [andy-cli repository](https://github.com/rivoli-ai/and
 - Multiple conversation turns
 - Graceful error handling
 
-### Future Enhancements
+## Known limitations
 
-Potential additions for future releases:
-- **File System Provider**: Implement `fs/read_text_file` and `fs/write_text_file`
-- **Terminal Provider**: Implement `terminal/create` and related methods
-- **Permission System**: Add `session/request_permission` for sensitive operations
-- **Audio/Image Support**: Enable multimodal prompts
-- **Performance Optimizations**: Caching, batching, connection pooling
+Implemented and covered by tests:
+- `initialize` handshake with integer protocol-version negotiation
+- `session/new`, `session/load` (with history replay), `session/prompt`,
+  `session/set_mode` (by `modeId`), `session/cancel`
+- All `session/update` variants (message/thought chunks, `tool_call`,
+  `tool_call_update`, `plan`)
+- Multimodal prompt content blocks (text, image, audio, resource, resource_link),
+  validated against negotiated capabilities
+- Agent → client `fs/read_text_file`, `fs/write_text_file`, `terminal/*`, and
+  `session/request_permission`
+- Schema-backed validation of wire output against the pinned ACP v1 schema
+
+Not yet implemented (optional ACP v1 surface):
+- `authenticate` / `logout` and auth methods
+- `session/set_config_option` and the config-option system (models, reasoning levels)
+- `session/list`, `session/delete`, `session/resume`, `session/close`
+- MCP server transports beyond passing configuration through to the agent
+- `available_commands_update`, `current_mode_update`, `usage_update`,
+  `session_info_update`, `config_option_update` session updates
+- Diff/terminal `ToolCallContent` variants and tool-call `locations`
+
+JSON-RPC batch requests are intentionally **not** supported and are rejected.
 
 ## Contributing
 

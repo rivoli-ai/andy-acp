@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Andy.Acp.Core.Agent;
+using Andy.Acp.Core.Client;
 using Andy.Acp.Core.JsonRpc;
 using Andy.Acp.Core.Transport;
 using Microsoft.Extensions.Logging;
@@ -30,16 +31,24 @@ namespace Andy.Acp.Core.Protocol
         private readonly ITransport? _transport;
         private readonly string _sessionId;
         private readonly ILogger? _logger;
+        private readonly IAcpClient? _client;
 
         public SessionUpdateStreamer(
             ITransport? transport,
             string sessionId,
-            ILogger? logger = null)
+            ILogger? logger = null,
+            IAcpClient? client = null)
         {
             _transport = transport;
             _sessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
             _logger = logger;
+            _client = client;
         }
+
+        /// <inheritdoc />
+        public IAcpClient Client =>
+            _client ?? throw new InvalidOperationException(
+                "No ACP client is available in this context (agent-to-client requests require a live connection).");
 
         public Task SendMessageChunkAsync(string text, CancellationToken cancellationToken)
         {
